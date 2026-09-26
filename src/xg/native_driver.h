@@ -2489,30 +2489,59 @@ private:
 	// **そのパートはインサーションを通るか**（6.161）。バリエーションを
 	// インサーションとして使っている場合と、インサーション 1-4 の掛かり先。
 	// 通るパートは、スロットのミキサ（0x32・0x34-0x37）が丸ごと別の値になる
-	bool ins_routed(int part) const
+	bool ins_routed(int part) const { return ins_target(part) >= 0; }
+
+	// **どのエフェクトに挿さっているか**。0 がバリエーション（インサーション接続）、
+	// 1-4 がインサーション 1-4、-1 は通らない
+	int ins_target(int part) const
 	{
 		if (!m_ram || part < 0 || part >= PARTS)
-			return false;
+			return -1;
 		if (m_ram[ram::VAR_BLOCK + ram::VAR_CONNECT] == 0
 		    && int(m_ram[ram::VAR_BLOCK + ram::VAR_PART]) == part)
-			return true;
+			return 0;
 		for (int n = 0; n < 4; n++)
 			if (int(m_ram[ram::INS_BLOCK[n] + ram::INS_PART]) == part)
-				return true;
-		return false;
+				return n + 1;
+		return -1;
 	}
 
-	// インサーションを通るときのミキサ。**実機の値をそのまま置く**
-	// （lofi・ins2 のどちらでも同じ値だった。6.161）
-	void ins_mixer(nv::slot_regs &r, int pan_pos = 64) const
+	// インサーションを通るときのミキサ。**実機の値をそのまま置く**（6.161）。
+	// 0x35-0x37 は**挿さっている先で違う**（3 つとも同じ値）。前はどれも 0x4000 に
+	// していたが、それはバリエーションの値で、インサーション 1-4 では音が
+	// 挿した先へ行かず、別の出口へ出ていた。firmware に 5 通り鳴らさせて測った
+	// （マスタの声。スレーブの声は write_slot で置き換える）
+	void ins_mixer(nv::slot_regs &r, int pan_pos, int target) const
 	{
+		static const u16 ROUTE[5] = { 0x4000, 0x1000, 0x0001, 0x0002, 0x0004 };
 		// **パンは音色（打）自身の分だけ残る**（6.184）。
 		// 真ん中の音色なら 0 なので、lofi・ins2 では見えていなかった
 		r.set(0x32, nv::ins_pan_reg(m_rom, pan_pos));
 		r.set(0x34, u16((r.v[0x34] & 0xff00) | 0x10));
-		r.set(0x35, 0x4000);
-		r.set(0x36, 0x4000);
-		r.set(0x37, 0x4000);
+		const u16 v = ROUTE[target < 0 || target > 4 ? 0 : target];
+		r.set(0x35, v);
+		r.set(0x36, v);
+		r.set(0x37, v);
+	}
+
+	// **スレーブの声の出口（0x35-0x37）**。スレーブの声は自分の DAC には出ず、
+	// MELO の線でマスタのミキサへ入るので、同じ行き先でも値が違う。firmware が
+	// 同じ音をマスタとスレーブで鳴らしたときの値（素通し・バリエーション・
+	// インサーション 1-4。パートの Dry Level では変わらない）。
+	// 前はマスタの値のまま書いていて、スレーブに置いた声は**どこにも出ていなかった**
+	static u16 slave_route(u16 master)
+	{
+		switch (master) {
+		case 0x4d00: return 0x000f;       // 素通し
+		case 0x4800: return 0x000c;
+		case 0x4400: return 0x000a;
+		case 0x4000: return 0x0008;       // バリエーション
+		case 0x1000: return 0x0010;       // インサーション 1
+		case 0x0001: return 0x1000;       // インサーション 2
+		case 0x0002: return 0x2000;       // インサーション 3
+		case 0x0004: return 0x4000;       // インサーション 4
+		default:     return master;
+		}
 	}
 
 	// **合成の写しのときは、つまみを織り込んだ値をその場で組み直す**（6.154）。
@@ -3086,7 +3115,7 @@ public:
 					sr.set(0x34, exact_send(su, part, true, su.base34));
 					// **インサーションを通るパートはミキサが丸ごと別**（6.161）
 					if (ins_routed(part))
-						ins_mixer(sr, nv::voice_pan_pos(m_rom, el, pnote));
+						ins_mixer(sr, nv::voice_pan_pos(m_rom, el, pnote), ins_target(part));
 				} else {
 					sr.set(0x33, send_reg(*c, 0x33, false, pc.rev, c->cal_rev,
 					                      su.rnd_drop, su.base33));
@@ -3401,7 +3430,7 @@ public:
 				dr.set(0x34, exact_send(su, part, true, dr.v[0x34]));
 				if (ins_routed(part)) {
 					const int dp = drum_setup_of(part, su.keynote, 0x04);
-					ins_mixer(dr, dp < 0 ? 64 : dp);
+					ins_mixer(dr, dp < 0 ? 64 : dp, ins_target(part));
 				}
 			}
 			// **つまみの差を乗せる元**。写しがあればその値、
@@ -3586,9 +3615,11 @@ private:
 
 	void write_slot(int slot, const nv::slot_regs &r)
 	{
+		const bool slave = slot >= CHIP_SLOTS;
 		for (int i = 0; i < 0x40; i++)
 			if (r.write & (u64(1) << i))
-				m_poke(u32(slot) * 64 + u32(i), r.v[i]);
+				m_poke(u32(slot) * 64 + u32(i),
+				       slave && i >= 0x35 && i <= 0x37 ? slave_route(r.v[i]) : r.v[i]);
 	}
 
 	// **音程の包絡線の段を進める**。チップが行き先に着いていたら、
