@@ -773,7 +773,7 @@ private:
 	// firmware が、こちらが鳴らしているスロットに書いた回数
 	u32  m_ne_fw_stomp = 0;
 	void note_fw_swp(bool master, u32 reg, u16 value);
-	u64  m_fw_keymask = 0;     // firmware がつぎに鳴らすスロットのマスク
+	u64  m_fw_keymask[2] = { 0, 0 };  // firmware がつぎに鳴らすスロットのマスク（マスタ・スレーブ）
 	// firmware を細く回し続ける刻み（100ms ごとに 5ms）。止めきると液晶・
 	// ボタン・firmware 自身の後始末が全部止まる
 	// **パネルを触っている間は firmware を全速で回す**（doc/native-engine.md の 6.119）。

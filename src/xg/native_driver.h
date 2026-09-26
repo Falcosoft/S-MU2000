@@ -35,7 +35,35 @@ class native_driver
 {
 public:
 	static constexpr int PARTS = 64;
-	static constexpr int SLOTS = 64;
+	// **声のスロットは 2 つの SWP30 を合わせた 128**。0-63 がマスタ、64-127 が
+	// スレーブ。実機の firmware はマスタから使い、あふれるとスレーブへ回す。
+	// 前はマスタの 64 だけで、65 声目から先は古い声を奪っていた（画面の
+	// 発音数でスレーブがいつも 0 だった）。firmware がスレーブの声に書く値は
+	// マスタと 1 つも違わない（同じ音をそれぞれで鳴らして全レジスタを比べた）。
+	// レジスタの番地は `スロット * 64 + reg` のままで、0x1000 から上がスレーブ
+	static constexpr int SLOTS = 128;
+	static constexpr int CHIP_SLOTS = 64;
+
+	// スロットの印（128 ビット）。32 ビットの Windows でも作れるように 64 ビット 2 つで持つ
+	struct slot_bits
+	{
+		u64 w[2] = { 0, 0 };
+		static slot_bits of(int i)
+		{
+			slot_bits b;
+			b.w[i >> 6] = u64(1) << (i & 63);
+			return b;
+		}
+		bool test(int i) const { return (w[i >> 6] >> (i & 63)) & 1; }
+		void set(int i) { w[i >> 6] |= u64(1) << (i & 63); }
+		explicit operator bool() const { return (w[0] | w[1]) != 0; }
+		slot_bits &operator|=(const slot_bits &o)
+		{
+			w[0] |= o.w[0];
+			w[1] |= o.w[1];
+			return *this;
+		}
+	};
 
 	// **フィルタの段を流す時刻の補正**（サンプル）。
 	// 段の時刻は firmware に鳴らさせた音から録るが、録るときの時計と
@@ -180,7 +208,7 @@ public:
 		u64 age = 0;
 	};
 
-	// SWP30 のマスタへ 1 レジスタ書く口
+	// SWP30 へ 1 レジスタ書く口。0x1000 から上はスレーブ（スロット 64-127）
 	using poke_fn = std::function<void(u32 reg, u16 value)>;
 
 	void set_poke(poke_fn f) { m_poke = std::move(f); }
@@ -195,7 +223,7 @@ public:
 	// 尾をどこまで追うかはこれで決める
 	void set_slot_held(peek_fn f) { m_slot_held = std::move(f); }
 	void set_rom(const u8 *rom) { m_rom = rom; }
-	// **そのスロット（マスタの声 0-63）を今 native が鳴らしているなら、そのパート**。
+	// **そのスロット（0-63 マスタ、64-127 スレーブ）を今 native が鳴らしているなら、そのパート**。
 	// 鳴らしていなければ -1（画面のスペクトラムが声をパートに振り分けるのに使う）
 	int slot_part(int i) const
 	{
@@ -318,11 +346,12 @@ public:
 	// 知らないので、避けないと「firmware が自分の音の続きを書く」ときに
 	// こちらの音が壊れる（doc/native-engine.md の 6.47）。
 	// 呼ぶのは mu2000 のバス書き込みの所（firmware の書き込みだけが通る）
-	void mark_fw_slots(u64 mask)
+	// `base` はそのチップの先頭スロット（マスタ 0、スレーブ 64）
+	void mark_fw_slots(u64 mask, int base = 0)
 	{
-		for (int i = 0; i < SLOTS; i++)
+		for (int i = 0; i < CHIP_SLOTS; i++)
 			if ((mask >> i) & 1)
-				m_fw_touch[i] = m_clock + 1;   // 0 は「触っていない」
+				m_fw_touch[base + i] = m_clock + 1;   // 0 は「触っていない」
 	}
 
 	// **firmware が声のレジスタに書いたスロットも、その firmware のものとみなす**
@@ -446,12 +475,12 @@ public:
 
 	// いまこちらが鳴らしているスロットの印。firmware が写し取りのために
 	// 鳴らすとき、ここと重なっていないかを見るのに使う
-	u64 slot_mask() const
+	slot_bits slot_mask() const
 	{
-		u64 m = 0;
+		slot_bits m;
 		for (int i = 0; i < SLOTS; i++)
 			if (m_slot[i].on)
-				m |= u64(1) << i;
+				m.set(i);
 		return m;
 	}
 
@@ -503,7 +532,7 @@ public:
 			// **同じ時刻のものは 1 回で押す**。実機も要素をまとめて
 			// 押すので、要素ごとに分けると合図が 2 回になってしまう
 			size_t w = 0;
-			u64 now = 0;
+			slot_bits now;
 			for (size_t i = 0; i < m_pend.size(); i++) {
 				if (m_pend[i].at <= clock)
 					now |= m_pend[i].mask;
@@ -2807,12 +2836,12 @@ public:
 		const int knote = fixed_note >= 0 ? fixed_note : note;
 		// **ベロシティ感度**（08 pp 0C・0D）。これも音色を選ぶ前に掛かる
 		const int pvel = part_vel(part, vel);
-		u64 keymask = 0;
+		slot_bits keymask;
 		bool any = false;
 		u32 taken = 0;                   // もう使った写し取りの印
 		int used = 0;
 		int nwrote = 0;                  // レジスタを書いた要素の数
-		std::vector<std::pair<u64, u32>> pend;   // スロット → byte72 の遅れ
+		std::vector<std::pair<slot_bits, u32>> pend;   // スロット → byte72 の遅れ
 		// **滑る音は、押した鍵と滑り出す鍵の「高いほう」で波形を選ぶ**（6.168）。
 		// 多段サンプルは鍵の上限で選ぶので、滑る範囲のいちばん高い所を
 		// 通せる記録でないと足りない。CC84 で 48 から 72 へ滑るときは 72、
@@ -3071,7 +3100,7 @@ public:
 				             part, note, vel, pc.vol, c ? c->cal_vol : -9, pc.expr, c ? c->cal_expr : -9,
 				             pc.pan, c ? c->cal_pan : -9, su.att, note_att(su, part));
 			// byte72 が 0 でなければ、その要素は遅れて鳴る
-			pend.push_back({ u64(1) << slot, nv::elem_delay(el) });
+			pend.push_back({ slot_bits::of(slot), nv::elem_delay(el) });
 			nwrote++;
 			any = true;
 		}
@@ -3274,7 +3303,7 @@ public:
 		// 合成のときは 1 つだけ使う（ドラムは 1 打 1 スロット）
 		const std::vector<nv::voice_cal> &dcals = synth ? synth_cals() : it->second;
 		const size_t ndcal = synth ? 1 : dcals.size();
-		u64 keymask = 0;
+		slot_bits keymask;
 		int nwrote = 0;
 		// **同じオルタネートグループの打を止める**（6.151）。ハイハットの
 		// 開いた音は、閉じた音を打った瞬間に止まる。見ていないと刻みが濁る
@@ -3413,7 +3442,7 @@ public:
 				std::fprintf(stderr, "drum part=%d note=%d vel=%d/%d att=%d->%d 段 %d 写し %016llx%s",
 				             part, note, vel, c.cal_vel, att0, att,
 				             int(c.filter_env.size()), (unsigned long long)c.mask, "\n");
-			keymask |= u64(1) << slot;
+			keymask.set(slot);
 			nwrote++;
 		}
 		if (!keymask)
@@ -3516,9 +3545,12 @@ private:
 			const bool avoid = pass == 0;
 			int oldest = -1, oldest_rel = -1;
 			u64 oldest_age = ~u64(0), oldest_rel_age = ~u64(0);
+			// マスタの上から（下の `keep` 個は firmware に空ける）、埋まったら
+			// スレーブの上から。実機の firmware もマスタを使い切ってからスレーブへ回す
 			const int keep = fw_slots();
 			for (int n2 = 0; n2 < SLOTS - keep; n2++) {
-				const int i = SLOTS - 1 - n2;
+				const int i = n2 < CHIP_SLOTS - keep ? CHIP_SLOTS - 1 - n2
+				                                     : SLOTS - 1 - (n2 - (CHIP_SLOTS - keep));
 				if (avoid && fw_recent(i))
 					continue;
 				const slot_use &u = m_slot[i];
@@ -3679,19 +3711,26 @@ private:
 		return (m_busy + 32) / 64;
 	}
 
-	void key_on(u64 mask)
+	void key_on(const slot_bits &mask)
 	{
 		if (debug_on())
 			std::fprintf(stderr, "keyon clock=%llu\n", (unsigned long long)m_clock);
 		static const u32 MASK_REG[4] = { 0x1cf, 0x1ce, 0x18f, 0x18e };
-		for (int i = 0; i < 4; i++)
-			m_poke(MASK_REG[i], u16((mask >> (i * 16)) & 0xffff));
-		m_poke(0x20e, 1);
+		// チップごとに押す。押す声の無いチップには触らない
+		for (int chip = 0; chip < 2; chip++) {
+			const u64 m = mask.w[chip];
+			if (!m)
+				continue;
+			const u32 base = u32(chip) * 0x1000;
+			for (int i = 0; i < 4; i++)
+				m_poke(base + MASK_REG[i], u16((m >> (i * 16)) & 0xffff));
+			m_poke(base + 0x20e, 1);
+		}
 		// **音程の包絡線の行き先はキーオンの「あと」に書く**。チップは
 		// キーオンのときの `0x10` を初めの高さとして取り込むので、
 		// 先に書いてしまうと包絡線が無くなる（実機も 15 サンプル後に書く）
 		for (int i = 0; i < SLOTS; i++) {
-			if (!((mask >> i) & 1))
+			if (!mask.test(i))
 				continue;
 			if (m_slot[i].peg_tgt != 0xffff)
 				m_poke(u32(i) * 64 + 0x10, m_slot[i].peg_tgt);
@@ -3759,7 +3798,7 @@ private:
 	bool m_rec = false;            // 写し取りの最中（段が後から増える）
 	u64 m_traj_next = 0;           // つぎに段を書く時刻
 	// 遅らせて鳴らす要素（byte72）。時が来たら key_on する
-	struct pending_key { u64 mask; u64 at; };
+	struct pending_key { slot_bits mask; u64 at; };
 	std::vector<pending_key> m_pend;
 	// firmware がレジスタを書き終える時刻（1/64 サンプル単位）
 	u64 m_busy = 0;
