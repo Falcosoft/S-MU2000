@@ -112,21 +112,68 @@ void mu2000::set_scope_part(int part)
 		scope_refresh_owner();
 }
 
+void mu2000::set_part_scopes(bool on)
+{
+	if (m_pscope_on.exchange(on, std::memory_order_relaxed) != on && on)
+		scope_refresh_owner();
+}
+
 void mu2000::scope_tap_fn(void *ctx, const s32 *samples)
 {
 	const scope_tap &t = *static_cast<const scope_tap *>(ctx);
 	mu2000 &m = *t.self;
 	const int part = m.m_scope_part.load(std::memory_order_relaxed);
-	if (part < 0)
-		return;
-	float sum = 0.0f;
 	const int base = t.chip * 64;
-	for (int i = 0; i < 64; i++)
-		if (samples[i] && m.m_scope_owner[size_t(base + i)].load(std::memory_order_relaxed) == part)
-			sum += float(samples[i]);
-	const u32 w = m.m_scope_w[size_t(t.chip)].load(std::memory_order_relaxed);
-	m.m_scope_ring[size_t(t.chip)][w & (SCOPE_N - 1)] = sum;
-	m.m_scope_w[size_t(t.chip)].store(w + 1, std::memory_order_release);
+	if (part >= 0) {
+		float sum = 0.0f;
+		for (int i = 0; i < 64; i++)
+			if (samples[i] && m.m_scope_owner[size_t(base + i)].load(std::memory_order_relaxed) == part)
+				sum += float(samples[i]);
+		const u32 w = m.m_scope_w[size_t(t.chip)].load(std::memory_order_relaxed);
+		m.m_scope_ring[size_t(t.chip)][w & (SCOPE_N - 1)] = sum;
+		m.m_scope_w[size_t(t.chip)].store(w + 1, std::memory_order_release);
+	}
+	// 全パート（一覧）。1 サンプルに 64 パートぶんの行を 1 つ
+	if (m.m_pscope_on.load(std::memory_order_relaxed)) {
+		const u32 w = m.m_pscope_w[size_t(t.chip)].load(std::memory_order_relaxed);
+		float *row = m.m_pscope.data() + (size_t(t.chip) * PSCOPE_N + (w & (PSCOPE_N - 1))) * 64;
+		std::fill(row, row + 64, 0.0f);
+		for (int i = 0; i < 64; i++) {
+			if (!samples[i])
+				continue;
+			const int o = m.m_scope_owner[size_t(base + i)].load(std::memory_order_relaxed);
+			if (o >= 0 && o < 64)
+				row[o] += float(samples[i]);
+		}
+		m.m_pscope_w[size_t(t.chip)].store(w + 1, std::memory_order_release);
+	}
+}
+
+void mu2000::part_scope_read(int part, float *out, size_t n) const
+{
+	n = std::min(n, PSCOPE_N);
+	if (part == PSCOPE_OUT) {
+		const u32 end = m_oscope_w.load(std::memory_order_acquire);
+		for (size_t i = 0; i < n; i++) {
+			const u32 k = end - u32(n) + u32(i);
+			out[i] = (end >= n || k < end) ? m_oscope[k & (PSCOPE_N - 1)] : 0.0f;
+		}
+		return;
+	}
+	if (part < 0 || part >= 64) {
+		std::fill(out, out + n, 0.0f);
+		return;
+	}
+	const u32 end = std::min(m_pscope_w[0].load(std::memory_order_acquire), m_pscope_w[1].load(std::memory_order_acquire));
+	for (size_t i = 0; i < n; i++) {
+		const u32 k = end - u32(n) + u32(i);
+		if (end < n && k >= end) {
+			out[i] = 0.0f;
+			continue;
+		}
+		const size_t at = size_t(k & (PSCOPE_N - 1));
+		out[i] = m_pscope[at * 64 + size_t(part)] + m_pscope[(PSCOPE_N + at) * 64 + size_t(part)];
+	}
 }
 
 namespace {
@@ -3071,7 +3118,8 @@ void mu2000::run_sample(s32 &left, s32 &right)
 	if (m_nfx_on && !(++m_nfx_tick & 0x1ff))
 		native_fx_update();
 	// 画面がパートの音を見ているときは、声 → パートを 256 サンプル（6ms）ごとに読み直す
-	if (m_scope_part.load(std::memory_order_relaxed) >= 0 && !(++m_scope_tick & 0xff))
+	if ((m_scope_part.load(std::memory_order_relaxed) >= 0 || m_pscope_on.load(std::memory_order_relaxed)) &&
+	    !(++m_scope_tick & 0xff))
 		scope_refresh_owner();
 
 	// 台数が変わっていたら別スレッドの使い方を見直す（8192 サンプルごと）
@@ -3348,6 +3396,12 @@ void mu2000::run_sample(s32 &left, s32 &right)
 	// スレーブの DAC はどこにも繋がっていない
 	left  = lm;
 	right = rm;
+	// 一覧のマスターのスペクトラム（最終の出力、左右の平均）
+	if (m_pscope_on.load(std::memory_order_relaxed)) {
+		const u32 w = m_oscope_w.load(std::memory_order_relaxed);
+		m_oscope[w & (PSCOPE_N - 1)] = (float(lm) + float(rm)) * 0.5f;
+		m_oscope_w.store(w + 1, std::memory_order_release);
+	}
 }
 
 // ---- 状態の保存と復元
