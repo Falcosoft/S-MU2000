@@ -183,9 +183,17 @@ else
 PANEL_DATA_DIR := $(if $(XDG_DATA_HOME),$(XDG_DATA_HOME),$(HOME)/.local/share)/S-MU2000/panel
 endif
 
+# **The default goal is `all`, said out loud.** Without this it is whichever
+# rule comes first in the file, and this block sits above the `all:` lines: a
+# plain `make` ran install-panel-art and built nothing, and `make CROSS=windows`
+# compiled zero files and wrote the panel art to ~/AppData/Local instead.
+.DEFAULT_GOAL := all
+
 # The pictures go in unconditionally; panel.txt does not, because that is the
 # one file here a person edits (doc/panel-editing.md) and overwriting it on
 # every install would throw that away. Delete it to get the shipped one back.
+# Phony because it produces no file of its own.
+.PHONY: install-panel-art
 install-panel-art:
 	@mkdir -p "$(PANEL_DATA_DIR)"
 	@cp -f art/real/*.png "$(PANEL_DATA_DIR)/"
