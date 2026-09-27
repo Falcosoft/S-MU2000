@@ -110,6 +110,13 @@ public:
 	// スロット 1 つの使われ方
 	struct slot_use {
 		bool on = false;
+		// **鍵をもう押したか**。要素を書き終えてから押すので、混んでいると押すのが
+		// 数十 ms 遅れる（write_done）。その間に届いた離しは off_wait に預けて、
+		// 押した直後に効かせる（実機は MIDI を順に処理するので、押しを終えてから
+		// 離しを読む）。先に離していたので、ゲートの短いドラムが混んだ所で
+		// 鳴らなかった（離した印の付いたスロットへ遅れて鍵が押されていた）
+		bool keyed = false;
+		bool off_wait = false;
 		u32 tpos = 0;                   // フィルタの包絡線の、つぎに書く段
 		u64 tstart = 0;                 // 鳴らし始めた時刻
 		bool held = false;              // ダンパーで離しを待たせている
@@ -3199,15 +3206,34 @@ public:
 				continue;
 			if (!all && s.inst != want)
 				continue;
+			if (debug_on())
+				std::fprintf(stderr, "off part=%d note=%d slot=%d clock=%llu%s\n", part, note, i,
+				             (unsigned long long)m_clock, s.keyed ? "" : "（押す前。押してから離す）");
+			// **まだ鍵を押していない音の離しは、押した直後まで待たせる**（key_on）
+			if (!s.keyed) {
+				s.off_wait = true;
+				any = true;
+				continue;
+			}
+			release_slot(i);
+			any = true;
+		}
+		return any;
+	}
+
+	// スロット 1 つを離す（note_off の中身。鍵を押す前に届いた離しは key_on から）
+	void release_slot(int i)
+	{
+		slot_use &s = m_slot[i];
+		const int part = s.part;
+		const int note = s.keynote;
+		{
 			if (m_cc[part].damper) {       // ダンパーを踏んでいる間は切らない
 				s.held = true;
-				any = true;
-				continue;
+				return;
 			}
-			if (s.sost) {                  // ソステヌートで待たせている音
-				any = true;
-				continue;
-			}
+			if (s.sost)                    // ソステヌートで待たせている音
+				return;
 			// 減衰は**いまのつまみで**出す。s.att は鳴らし始めたときの値なので、
 			// 途中で音量を絞られた音を離すと、絞る前の大きさで鳴り終わってしまう
 			// **SFX の打**（6.234）は要素を持つが、離しを受けるかはドラムの決まり
@@ -3238,9 +3264,7 @@ public:
 				m_traj = true;
 				m_traj_next = 0;
 			}
-			any = true;
 		}
-		return any;
 	}
 
 	// そのパートの音を全部止める
@@ -3468,8 +3492,8 @@ public:
 			if (busy() > m_peak)
 				m_peak = busy();
 			if (debug_on())
-				std::fprintf(stderr, "drum part=%d note=%d vel=%d/%d att=%d->%d 段 %d 写し %016llx%s",
-				             part, note, vel, c.cal_vel, att0, att,
+				std::fprintf(stderr, "drum part=%d note=%d slot=%d clock=%llu vel=%d/%d att=%d->%d 段 %d 写し %016llx%s",
+				             part, note, slot, (unsigned long long)m_clock, vel, c.cal_vel, att0, att,
 				             int(c.filter_env.size()), (unsigned long long)c.mask, "\n");
 			keymask.set(slot);
 			nwrote++;
@@ -3745,7 +3769,8 @@ private:
 	void key_on(const slot_bits &mask)
 	{
 		if (debug_on())
-			std::fprintf(stderr, "keyon clock=%llu\n", (unsigned long long)m_clock);
+			std::fprintf(stderr, "keyon clock=%llu mask=%016llx:%016llx\n", (unsigned long long)m_clock,
+			             (unsigned long long)mask.w[1], (unsigned long long)mask.w[0]);
 		static const u32 MASK_REG[4] = { 0x1cf, 0x1ce, 0x18f, 0x18e };
 		// チップごとに押す。押す声の無いチップには触らない
 		for (int chip = 0; chip < 2; chip++) {
@@ -3766,6 +3791,15 @@ private:
 			if (m_slot[i].peg_tgt != 0xffff)
 				m_poke(u32(i) * 64 + 0x10, m_slot[i].peg_tgt);
 			m_slot[i].peg_tgt = 0xffff;
+			m_slot[i].keyed = true;
+		}
+		// 押す前に届いていた離しを、いま効かせる（slot_use::keyed）
+		for (int i = 0; i < SLOTS; i++) {
+			if (!mask.test(i) || !m_slot[i].off_wait)
+				continue;
+			m_slot[i].off_wait = false;
+			if (m_slot[i].on)
+				release_slot(i);
 		}
 	}
 
