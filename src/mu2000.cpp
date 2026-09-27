@@ -1625,8 +1625,13 @@ void mu2000::set_native_engine(int mode)
 		// 突き合わせられる（"N " が native）
 		// **0x1000 から上はスレーブ**（スロット 64-127。native_driver の SLOTS）
 		const bool slave = reg >= 0x1000;
-		if (slave)
+		if (slave) {
 			reg -= 0x1000;
+			// スレーブの声の出口（0x35-0x37）はマスタと値が違う（native_driver::slave_mixer）
+			const u32 r = reg % 64;
+			if (reg < 0x1000 && r >= 0x35 && r <= 0x37)
+				value = xg::native_driver::slave_mixer(value);
+		}
 		if (m_swp_trace)
 			std::fprintf(m_swp_trace, "N %s %04x %04x  pc=00000000  t=%.6f s=%llu\n",
 			             slave ? "00802000" : "00800000", reg, value, double(trace_sample()) / 44100.0,
