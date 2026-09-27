@@ -2824,6 +2824,9 @@ public:
 			return false;
 		if (m_cc[part].unknown)              // 知らない CC が効いている間は firmware へ
 			return false;
+		// パートモード「DRUM」（番号なし）も firmware へ（drum_on の説明）
+		if (m_ram && m_ram[ram::part_base(part) + 0x07] == 1)
+			return false;
 		if (is_drum(part)) {
 			if (m_drum.find(drum_key(part, note)) != m_drum.end())
 				return true;
@@ -3365,6 +3368,14 @@ public:
 	// ドラムの 1 打。写し取った値をそのまま使い、音量だけ強さで動かす
 	bool drum_on(int part, int note, int vel)
 	{
+		// **パートモード「DRUM」（番号なし、08 pp 07 = 1）は firmware に任せる**。
+		// ドラムセットアップ（DRUMS1-4）の編集が効かず、キットの既定値のまま鳴る
+		// （firmware で 4 組それぞれの鍵 38 の音量を 0 にして確かめた。DRUMS1-4 の
+		// パートは消え、DRUM のパートだけ鳴り続ける）。こちらは既定値の引き方を
+		// まだ持たないので、DRUMS1 の値で鳴らすと編集が効いてしまっていた。
+		// Bank 127 でドラムにしたパートは DRUMS1-4 が割り当てられるので、ここには来ない
+		if (m_ram && part >= 0 && part < PARTS && m_ram[ram::part_base(part) + 0x07] == 1)
+			return false;
 		const auto it = m_drum.find(drum_key(part, note));
 		const bool synth = it == m_drum.end();
 		if ((synth && !nocal_mode()) || !m_rom)

@@ -2948,7 +2948,13 @@ bool mu2000::native_midi(u8 byte, int port)
 	// 切れていた（実機は 110 段・1.1 秒かけてフィルタを閉じる）。
 	// 録り終わるまで待つぶん、その音色が native になるのは遅れるが、
 	// その間は firmware が鳴らすので音は正しい
-	if ((rec || drum) && !m_learning && !m_ndrv.delegated(part)) {
+	// **パートモード「DRUM」（番号なし）の打は写し取らない**。ドラムセットアップの
+	// 編集が効かないキットの既定値で鳴るので、それを覚えると、同じ鍵を DRUMS1-4 の
+	// パートで鳴らしたときに編集が効かなくなる（覚えた値は鍵で引くため）
+	const bool plain_drum = part >= 0 && part < 64 &&
+	                        size_t(xg::ram::part_base(part) + 0x07) < m_ram.size() &&
+	                        m_ram[xg::ram::part_base(part) + 0x07] == 1;
+	if ((rec || drum) && !m_learning && !m_ndrv.delegated(part) && !plain_drum) {
 		m_learn_note = note;
 		m_learn_vel = vel;
 		m_learn_drum = drum ? m_ndrv.drum_key(part, note) : 0;
