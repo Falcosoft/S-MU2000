@@ -279,6 +279,8 @@ public:
 		static_assert(XG_DRUM_SETS == xg::ram::DRUM_SETUP_SETS && XG_DRUM_KEYS == int(xg::ram::DRUM_SETUP_NOTES) &&
 		              XG_DRUM_PARAMS == int(xg::ram::DRUM_SETUP_PARAM), "drum setup size");
 		std::memcpy(out.drum, ram.data() + xg::ram::DRUM_SETUP, sizeof(out.drum));
+		for (int p = 0; p < XG_PARTS; p++)
+			out.kit[p] = ram[xg::ram::part_base(p) + 0x110];      // xg::nv::PART_KIT
 	}
 
 	static void publish_now(mu2000 &mu, bridge &br, bool ready, const char *message)

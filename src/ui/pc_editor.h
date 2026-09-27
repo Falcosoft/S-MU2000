@@ -34,7 +34,7 @@ private:
 	void mixer(xg::model &m, bridge &br);
 	void part_page(xg::model &m, bridge &br);
 	// ドラムセットアップ（DRUMS1-4）の面。行が鍵 13-91、列が 1 鍵ぶんの 23 個
-	void drum_page(const xg_snapshot &ram, bridge &br);
+	void drum_page(xg::model &m, const xg_snapshot &ram, bridge &br);
 
 	// 1 つの値を触る部品。数を並べる形（普段）と、つまみの形（開いたとき）がある。
 	// 選ぶ種類の値（MONO/POLY など）は品書きになる。width は数の形の幅
@@ -48,10 +48,6 @@ private:
 	double m_scrolled_at = -1;  // 最後にホイールで表をスクロールした時刻（ImGui の時計）
 	bool m_wheel_taken = false; // このコマでつまみがホイールを取ったか
 	int  m_drum_set = 0;        // ドラムの面で見ている組（0-3 = DRUMS1-4）
-	// 書いたばかりの値。firmware が RAM に書き終えるまで、画面はこちらを出す
-	// （出さないと、つまんで動かしている間に古い値へ跳ね戻る）
-	struct drum_edit { int set = -1, key = 0, idx = 0, value = 0; double at = 0; };
-	drum_edit m_drum_edit;
 };
 
 } // namespace ui

@@ -205,8 +205,11 @@ struct ui_texts {
 	const char *drum_used_by;
 	const char *drum_none;
 	const char *drum_reset;
+	const char *drum_names_from_fmt;
 	const char *drum_names_hint;
 	const char *drum_plain_note;
+	const char *drum_dblclick_hint;
+	const char *drum_no_user_hint;
 	const char *ed_knobs_on;
 	const char *ed_knobs_off;
 	// Part voice window (part_shapes.cpp).
@@ -216,6 +219,17 @@ struct ui_texts {
 	const char *ps_hint_graph;       // may contain \n
 	const char *ps_tab_shape;
 	const char *ps_tab_all;
+	const char *ps_tab_drum;
+	const char *ps_drum_not;
+	const char *ps_drum_plain;
+	const char *ps_drum_play;
+	const char *ps_drum_follow;
+	const char *ps_drum_title_mix;
+	const char *ps_drum_title_filter;
+	const char *ps_drum_title_env;
+	const char *ps_drum_no_shape;
+	const char *ps_drum_env_fmt;
+	const char *ps_drum_pitch_fmt;
 	const char *ps_title_vib;
 	const char *ps_title_wobble;
 	const char *ps_about_wobble;

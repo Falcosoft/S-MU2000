@@ -39,10 +39,12 @@ public:
 	{
 		xgui::audition_stop(br);
 		m_strip.strip_hidden(br);
+		drum_hidden(br);              // ドラムのタブの「鳴らす」
 		br.want_scope(-1);            // パートの音を拾うのもやめる
 	}
 
 private:
+	static void drum_hidden(bridge &br);
 	// 上のペインは一覧と同じ部品で描く（棒のドラッグや鍵盤の押さえを覚える入れ物として持つ）
 	overview m_strip;
 };

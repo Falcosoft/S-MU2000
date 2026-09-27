@@ -63,6 +63,8 @@ struct xg_snapshot {
 	u8  parts[XG_PARTS][XG_PART_COPY] = {};          // **XG のパート番号の順**に並べ直してある
 	// ドラムセットアップ 4 組 × 鍵 13-91 × 23 個（ワーク RAM の並び。ドラムの画面が読む）
 	u8  drum[XG_DRUM_SETS][XG_DRUM_KEYS][XG_DRUM_PARAMS] = {};
+	// パートのキットの番号（パートの塊の +0x110。xg::nv::PART_KIT）。ドラムの打の記録を引くのに使う
+	u8  kit[XG_PARTS] = {};
 	// 入ってきた MIDI から。口×チャンネル（口 * 16 + ch）ごと。パートとの対応は受信チャンネルで
 	u64 notes[XG_PARTS][2] = {};                     // 押さえている鍵
 	u8  velocity[XG_PARTS] = {};                     // 最後のノートオンの強さ
