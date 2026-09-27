@@ -374,18 +374,32 @@ void panel::build_fonts() const
 	if (m_font_ctx == ctx)
 		drop_fonts();
 
-	size_t bytes = 0;
+	// Two faces, not one. GDI drew the button legends and the key-top printing
+	// at FW_BOLD (make_font(13, FW_BOLD) and CreateFontA(..., FW_BOLD, ...), and
+	// gdi_mac.cpp/gdi_linux.cpp both note the font layer needs 600 or more), while
+	// the LCD's small sizes were FW_NORMAL. Dear ImGui's TTF loader has no weight
+	// axis, so the weight is a second face from the system rather than a faked
+	// one: striking the string again a fraction of a pixel off does thicken the
+	// stems, but it closes the counters and blurs. Slots 0 (label) and 3 (key)
+	// are the two GDI drew bold; the other four stay regular. When the machine
+	// has no bold face the regular one is used for those two as well, so nothing
+	// looks worse than it did.
+	size_t bytes = 0, bold_bytes = 0;
 	const void *data = cjk_font_data(bytes);
-	auto add = [&](int px) -> ImFont * {
-		if (!data)
+	const void *bold = cjk_bold_font_data(bold_bytes);
+	auto add = [&](int px, bool heavy) -> ImFont * {
+		const void *src = heavy && bold ? bold : data;
+		const std::size_t n = heavy && bold ? bold_bytes : bytes;
+		if (!src)
 			return nullptr;
 		ImFontConfig cfg;
 		cfg.FontDataOwnedByAtlas = false;   // ours, and it outlives the atlas
-		return atlas->AddFontFromMemoryTTF(const_cast<void *>(data), int(bytes),
+		return atlas->AddFontFromMemoryTTF(const_cast<void *>(src), int(n),
 		                                   float(px), &cfg);
 	};
-	ImFont *slot[6] = { add(label_px), add(small_px), add(tiny_px),
-	                    add(key_px),   add(tag_px),  add(num_px) };
+	ImFont *slot[6] = { add(label_px, true),  add(small_px, false),
+	                    add(tiny_px, false),  add(key_px, true),
+	                    add(tag_px, false),   add(num_px, false) };
 	// No CJK font on this machine: ImGui's embedded one, English only
 	if (!data) {
 		for (ImFont *&f : slot) {
