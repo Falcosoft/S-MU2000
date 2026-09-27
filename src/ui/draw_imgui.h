@@ -137,7 +137,7 @@ inline void line(ImDrawList *dl, int x1, int y1, int x2, int y2, COLORREF c,
 	     float(width));
 }
 
-// 凸多角形の塗りと輪郭 (panel.cpp の Polygon / svg.cpp の PolyPolygon の 1 区画ぶん)
+// 凸多角形の塗りと輪郭
 inline void poly(ImDrawList *dl, const ImVec2 *pts, int n, COLORREF fill_c,
                  COLORREF edge_c, float pen = 1.0f, bool closed = true)
 {

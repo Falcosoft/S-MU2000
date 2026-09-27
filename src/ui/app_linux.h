@@ -217,9 +217,10 @@ private:
 		}
 	}
 
-	// Modal popup over the live panel: gui_linux.cpp's implementation points
-	// sdl_popup at this window's framebuffer so the menu repaints the panel
-	// behind it. sub_chosen returns the submenu marker the user hovered
+	// Modal popup over the live panel: the implementation is in window_sdl.cpp,
+	// which hands sdl_popup a callback that paints the live frame again so the
+	// menu has the panel behind it. sub_chosen returns the submenu marker the
+	// user hovered
 	int run_list(const std::vector<sdl_popup::item> &items, int x, int y,
 	             int &sub_chosen);
 };

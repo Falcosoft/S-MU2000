@@ -530,8 +530,8 @@ void svg_art::draw(ImDrawList *dl, const RECT &dst, double deg) const
 // ---- 画像のとき
 //
 // GDI のときは出来上がりの 1 枚を DIB にして AlphaBlend で貼っていた。
-// ここでは同じ 1 枚を ImGui のテクスチャに置いてから AddImage で置くだけ
-// （mi::tex が contexts ごと TextureData を持ってくれるので、
+// ここでは同じ 1 枚を ImGui のテクスチャに置いてから AddImageQuad で置くだけ
+// （im::tex が contexts ごと TextureData を持ってくれるので、
 // DX11 / Metal / SDL_Renderer のどれでも同じ 3 行で済む）
 
 namespace {
@@ -689,7 +689,7 @@ void svg_art::draw_image(ImDrawList *dl, const RECT &dst, double deg) const
 	if (!t->valid())
 		return;                        // context が無い（描く先が無い）
 
-	// 角度を付けて 4 隅を置く。deg を 0 にするとただの AddImage と同じ。
+	// 角度を付けて 4 隅を置く。deg を 0 にするとただの AddImageQuad と同じ。
 	// 回すのは絵ではなくこの四角の 4 隅なので、つまみを回してもテクスチャは
 	// 一切触らない（GDI ではここに絵を焼き直していた）
 	const double rad = deg * 3.14159265358979 / 180.0;

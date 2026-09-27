@@ -41,9 +41,8 @@ static const unsigned short kKeyCodeF5 = 0x60;
 @private
 	NSTimer *_timer;
 	CGFloat  _scroll_accum;
-	// The panel renders through Metal + Dear ImGui instead of CoreGraphics.
-	// Same backend pair as the editor windows (pc_window_mac.mm); panel
-	// input stays shared.
+	// The panel renders through Metal + Dear ImGui. Same backend pair as the
+	// editor windows (pc_window_mac.mm); panel input stays shared.
 	CAMetalLayer *_mtl_layer;
 	id<MTLDevice> _mtl_dev;
 	id<MTLCommandQueue> _mtl_queue;

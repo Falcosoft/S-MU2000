@@ -355,8 +355,8 @@ $(BUILD)/src/gui.o: CXXFLAGS += $(IMGUI_FLAGS)
 # The app classes pull in app.h, whose editor headers want imgui.h
 $(BUILD)/src/ui/app_win.o: CXXFLAGS += $(IMGUI_FLAGS)
 $(BUILD)/src/ui/window_win.o: CXXFLAGS += $(IMGUI_FLAGS)
-# src/ui/ paints through ui/draw_imgui.h on the experiment branch; one rule
-# beats per-file lines as the port spreads (matches before generic below)
+# src/ui/ paints through ui/draw_imgui.h, so these need imgui.h on the include
+# path; one rule beats per-file lines (matches before generic below)
 $(BUILD)/src/ui/%.o: src/ui/%.cpp
 	@mkdir -p $(dir $@)
 	$(CXX) $(CXXFLAGS) $(IMGUI_FLAGS) -c -o $@ $<
@@ -740,11 +740,11 @@ $(BUILD)/live$(EXE): $(OBJS) $(BUILD)/src/mu2000.o $(MAC_IO_OBJS) $(BUILD)/src/l
 # gui draws the front-panel look of the real machine.
 #
 # panel.cpp and its neighbours are the **same source** as the Windows build; only
-# what is underneath differs. compat/gdi_mac.cpp fills the GDI interface in with
-# CoreGraphics and window_mac.mm fills the window in with AppKit
+# what is underneath differs. Dear ImGui + Metal fill the interface in with
+# Dear ImGui and window_mac.mm fills the window in with AppKit
 # (doc/porting-macos.md).
 #
-# window_mac.mm is the one file compiled as Objective-C++.
+# window_mac.mm is compiled as Objective-C++, and so is src/ui/shot_mac.mm.
 MAC_GUI_SRCS := src/ui/panel.cpp src/ui/editor.cpp src/ui/effects.cpp \
                 src/ui/png.cpp src/ui/layout.cpp src/ui/svg.cpp src/ui/player.cpp \
                 src/ui/audio_out_mac.cpp src/ui/audio_in_mac.cpp \
@@ -786,8 +786,8 @@ $(BUILD)/%.o: %.mm
 $(BUILD)/src/ui/app_mac.o: CXXFLAGS += $(IMGUI_FLAGS)
 $(BUILD)/src/ui/window_mac.o: CXXFLAGS += $(IMGUI_FLAGS)
 $(BUILD)/src/gui_mac.o: CXXFLAGS += $(IMGUI_FLAGS)
-# src/ui/ paints through ui/draw_imgui.h on the experiment branch; one rule
-# beats per-file lines as the port spreads (matches before generic below)
+# src/ui/ paints through ui/draw_imgui.h, so these need imgui.h on the include
+# path; one rule beats per-file lines (matches before generic below)
 $(BUILD)/src/ui/%.o: src/ui/%.cpp
 	@mkdir -p $(dir $@)
 	$(CXX) $(CXXFLAGS) $(IMGUI_FLAGS) -c -o $@ $<
@@ -823,7 +823,7 @@ VST3_SDK_SRCS := \
 	third_party/vst3/pluginterfaces/base/ustring.cpp
 
 # Uses the **same** panel.cpp / layout.cpp / svg.cpp as the Windows build, with
-# compat/gdi_mac.cpp filling in CoreGraphics underneath. The window is view_mac.mm
+# Dear ImGui + Metal underneath. The window is view_mac.mm
 #
 # Both plug-in formats show this one panel, so the view and the drawing layer are
 # named once and the VST3 bundle and the AU both build them. (The Windows side of

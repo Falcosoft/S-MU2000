@@ -16,8 +16,8 @@
 // The one thing that changes with that: ImGui antialiases its own primitives,
 // so the LCD's segment shapes go straight out as polygons. The GDI version
 // had to collect them into one overlay image instead, drawing 6x oversampled
-// on Windows and averaging k x k back down (panel::supersample_lcd and
-// fill_aa, both gone). What is left of it here is the geometry itself.
+// on Windows and averaging k x k back down (that machinery is gone). What is
+// left of it here is the geometry itself.
 
 #include "panel.h"
 #include "draw_imgui.h"
