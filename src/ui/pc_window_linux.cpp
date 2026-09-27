@@ -151,8 +151,8 @@ bool pc_window::create(std::string &err)
 	ImGuiStyle &st = ImGui::GetStyle();
 	st.FrameRounding = 3;
 
-	// The one shared font setup: ui/font_file.h asks fontconfig for the face
-	// and reads it once. This file used to carry its own copy of that lookup.
+	// The one shared font setup: ui/font_file.h asks fontconfig for a face,
+	// checks it can draw what the panel writes, and reads it once.
 	add_cjk_font(io.Fonts);
 
 	if (!ImGui_ImplSDL3_InitForSDLRenderer(m_win, m_ren)) {

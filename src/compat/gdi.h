@@ -4,9 +4,9 @@
 // on every platform: RECT/POINT for bounds and spots, COLORREF (red low,
 // blue in bits 16-23) for the palette, DT_* for layout.txt alignment bits.
 //
-// This used to be the GDI drawing surface (handles, device contexts, the
-// drawing calls, filled in per platform); the panel now paints through
-// Dear ImGui (ui/draw_imgui.h, ui/imgui_shell.h) and none of that remains.
+// Despite the name, nothing draws through this header: the panel paints
+// through Dear ImGui (ui/draw_imgui.h, ui/imgui_shell.h). What is left here is
+// the vocabulary those files and panel.txt are written in.
 //
 // The colour packing is Windows's, with red in the low byte and blue in bits
 // 16-23. panel.txt writes colours as #rrggbb, so this must not be changed.

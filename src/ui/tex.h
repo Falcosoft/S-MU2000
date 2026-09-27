@@ -120,8 +120,8 @@ public:
 	// Hand the texture back the way ImGui hands back its own: queue it for
 	// destruction and let the backend drop the graphics object when it is
 	// done, instead of unregistering and freeing here. ImTextureData says so
-	// itself -- WantDestroyNextFrame is "may still be used in the current
-	// frame" -- and this code used to ignore that. Freeing mid-frame is
+	// itself: WantDestroyNextFrame is "may still be used in the current
+	// frame". Freeing mid-frame is
 	// invisible until a draw command recorded a moment earlier is read at the
 	// next Render(), and then it is a use-after-free: the Metal backend
 	// asserted on it, reading a Width of 0 and a garbage status out of memory

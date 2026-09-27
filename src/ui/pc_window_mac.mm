@@ -615,10 +615,9 @@ bool pc_window::create(std::string &err)
 	ImGuiStyle &st = ImGui::GetStyle();
 	st.FrameRounding = 3;
 
-	// Japanese-capable fonts, found **by name** through CoreText (never
-	// hard-coding a path into /System), by the one shared setup in
-	// ui/font_file.h. This file used to carry its own copy of the family list
-	// and its own CoreText resolver.
+	// The one shared font setup: ui/font_file.h asks CoreText for a face by
+	// family name (never a hard-coded path into /System), checks it can draw
+	// what the panel writes, and reads it once.
 	add_cjk_font(io.Fonts);
 
 	ImGui_ImplMetal_Init(h->dev);

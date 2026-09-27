@@ -49,9 +49,9 @@ namespace shot_detail {
 // The draw commands point at the panel's picture textures, so both have to
 // still be alive when ImGui::Render() reads them -- a panel that goes out of
 // scope before Render takes its textures with it, and Render is what uploads
-// them. The old code built the panel inside shot_frame() and so destroyed it
-// one line too early; it happened not to crash (the freed ImTextureData still
-// held a usable TexID), which is not a thing to rely on.
+// them. Building the panel inside shot_frame() and letting it die at the end of
+// the function gets that wrong by one line, and it tends not to crash: the
+// freed ImTextureData still holds a usable TexID. Not a thing to rely on.
 struct rig {
 	panel   p;
 	toolbar bar;

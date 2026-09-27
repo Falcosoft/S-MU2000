@@ -147,9 +147,8 @@ bool pc_window::create(HINSTANCE inst, std::string &err)
 	style.FontScaleDpi = scale;
 	style.FrameRounding = 3;
 
-	// One font setup for the whole program: ui/font_file.h finds the face
-	// (YuGothM / meiryo / msgothic, in that order) and reads it once. This
-	// window used to carry its own copy of that list.
+	// One font setup for the whole program: ui/font_file.h finds a Japanese
+	// face, checks it can draw what the panel writes, and reads it once.
 	add_cjk_font(io.Fonts);
 
 	ImGui_ImplWin32_Init(m_hwnd);
