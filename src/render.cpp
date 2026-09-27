@@ -475,8 +475,8 @@ int main(int argc, char **argv)
 		if (part_rms >= 0 && i == size_t(boot * rate))
 			mu.set_part_scopes(true);
 		if (voices_every > 0.0 && i >= size_t((boot + voices_next) * rate)) {
-			std::printf("VOICES %.3f M %d S %d", voices_next,
-			            mu.swpm().sounding_voices(), mu.swps().sounding_voices());
+			std::printf("VOICES %.3f M %d S %d LED %03x", voices_next,
+			            mu.swpm().sounding_voices(), mu.swps().sounding_voices(), unsigned(mu.leds()));
 			if (part_rms >= 0) {
 				static float buf[mu2000::PSCOPE_N];
 				mu.part_scope_read(part_rms, buf, mu2000::PSCOPE_N);

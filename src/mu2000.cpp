@@ -546,7 +546,23 @@ u16 mu2000::leds() const
 	u16 out = 0;
 	for (int i = 0; i < 10; i++)
 		out |= u16(BIT(v, from[i])) << (9 - i);
+	// native の口では MU の灯（bit 6）の点滅をこちらで作る（led_blink）
+	if (m_native_engine && m_ne_clock >= m_led_off_from && m_ne_clock < m_led_off_until)
+		out &= u16(~(1u << 6));
 	return out;
+}
+
+// **MU の灯を一瞬消す**。firmware は**ノートオン**（強さ 0 は除く）で MU の灯を
+// 消し、受けてから約 38ms 後に消えて約 52ms で点き直す。続けて受けている間は消えたまま
+// （最後に受けてから約 90ms で点く）。プログラムチェンジ・コントロールチェンジ・
+// ノートオフでは消えない。firmware の道で 1ms 刻みに測った（DIN も USB も同じ）。
+// リセットでも消えるが、その間は firmware を回し続けるので firmware 自身が消す
+void mu2000::led_blink(u64 at)
+{
+	constexpr u64 DELAY = 44100 * 38 / 1000, OFF = 44100 * 52 / 1000;
+	if (at >= m_led_off_until)
+		m_led_off_from = at + DELAY;
+	m_led_off_until = std::max(m_led_off_until, at + DELAY + OFF);
 }
 
 
@@ -2816,6 +2832,8 @@ bool mu2000::native_midi(u8 byte, int port)
 		return true;
 	}
 	n.have = 0;
+	if (kind == 0x90 && (byte & 0x7f))
+		led_blink(fire);                  // MU の灯（leds）
 	// **受信チャンネル**（08 pp 04。6.150）。既定はパート = チャンネル + 口 x 16
 	// だが、曲が付け替えることがある。聞いているパートが無いときは実機も
 	// 黙るので何もせず、2 つ以上のときは重ねて鳴るので firmware に任せる
