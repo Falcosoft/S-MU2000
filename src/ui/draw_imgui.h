@@ -59,12 +59,34 @@ inline ImU32 col(COLORREF c, unsigned char a = 255)
 	return IM_COL32(GetRValue(c), GetGValue(c), GetBValue(c), a);
 }
 
-// The three panel slots (label/small/tiny, re-rasterized at every resize
-// in panel.cpp). px rides along because ImGui rasterizes per size.
+// The panel's font slots. px rides along with each one because ImGui
+// rasterizes per size, and the panel re-rasterizes its own set on every
+// resize (panel.cpp) -- the LCD lettering is 4-9 px and unreadable when it is
+// one 16 px font scaled down. The window's own pieces (the button strip, the
+// popups) use the fixed 16 px set from imgui_shell.h instead.
 struct fonts {
 	ImFont *label = nullptr, *small = nullptr, *tiny = nullptr;
+	ImFont *key = nullptr, *tag = nullptr, *num = nullptr;
 	float label_px = 13.0f, small_px = 8.5f, tiny_px = 6.5f;
+	float key_px = 9.0f, tag_px = 8.0f, num_px = 8.0f;
 };
+
+// Cap height in px, taken from the font's own baked metrics ('A' top to 'A'
+// bottom, unscaled, so it is scaled here). The panel centers its legends on
+// the *visible* cap height, not on the line box: an ImGui text position is the
+// top of the line, and the line carries the whole ascent and descent, so
+// centering the line box pushes an all-caps label down. That is what
+// DT_VCENTER did under GDI too, and why panel.cpp stops using it wherever a
+// label is all caps.
+inline float cap_height(ImFont *font, float px)
+{
+	if (!font)
+		return px * 0.7f;                    // nothing measured: a sane guess
+	ImFontBaked *baked = font->GetFontBaked(px);
+	if (!baked || baked->Size <= 0.0f)
+		return px * 0.7f;
+	return baked->Ascent * (px / baked->Size);
+}
 
 inline ImVec2 pos_of(const RECT &r) { return ImVec2(float(r.left), float(r.top)); }
 inline ImVec2 size_of(const RECT &r)
@@ -175,6 +197,37 @@ inline void text_in(ImDrawList *dl, ImVec2 pos, ImVec2 size, const char *s,
 		dl->AddText(at, col(c), s);
 	if (wrap)
 		dl->PopClipRect();
+}
+
+// A DT_* combination, the vocabulary panel.txt and layout.txt use, so the
+// drawing calls read the same as the GDI ones they replace. Only the bits
+// that mean something survive: DT_CENTER / DT_VCENTER / DT_WORDBREAK.
+inline void text_dt(ImDrawList *dl, const RECT &r, const char *s, COLORREF c,
+                    ImFont *font, float px, UINT flags)
+{
+	text_in(dl, pos_of(r), size_of(r), s, c, font, px,
+	        (flags & DT_CENTER) != 0, (flags & DT_VCENTER) != 0,
+	        (flags & DT_WORDBREAK) != 0);
+}
+
+// All-caps legend centered in a box on its cap height: the cap block sits at
+// the box's middle (horizontally centered on the box too when center_x).
+inline void text_cap(ImDrawList *dl, const RECT &r, const char *s, COLORREF c,
+                     ImFont *font, float px, bool center_x)
+{
+	if (!s || !s[0])
+		return;
+	const float cap = cap_height(font, px);
+	const ImVec2 ts = font ? font->CalcTextSizeA(px, FLT_MAX, 0.0f, s)
+	                       : ImGui::CalcTextSize(s);
+	ImVec2 at((float(r.left) + float(r.right)) * 0.5f - ts.x * 0.5f,
+	         (float(r.top) + float(r.bottom)) * 0.5f - cap * 0.5f);
+	if (!center_x)
+		at.x = float(r.left);
+	if (font)
+		dl->AddText(font, px, at, col(c), s);
+	else
+		dl->AddText(at, col(c), s);
 }
 
 } // namespace im

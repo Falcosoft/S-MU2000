@@ -24,6 +24,7 @@
 #include "ui/draw_imgui.h"
 
 #include <chrono>
+#include <memory>
 #include <string>
 #include <vector>
 
@@ -31,6 +32,7 @@
 #include "compat/gdi.h"
 
 struct ImDrawList;
+struct ImGuiContext;
 
 namespace ui {
 
@@ -61,7 +63,7 @@ enum : int {
 };
 
 // 触れる場所
-enum class spot_kind { none, button, wheel, volume, knob, tab, action, part, list };
+enum class spot_kind { none, button, wheel, volume, adgain, knob, tab, action, part, list };
 
 struct spot {
 	spot_kind      kind = spot_kind::none;
@@ -127,14 +129,20 @@ public:
 	// パラメータの層に読ませる（問い合わせはしない）。戻り値は「新しい値を読んだか」
 	bool tick(bridge &br);
 
-	// 描く。status は下に小さく出す 1 行。無ければ空でよい
+	// 描く。status は下に小さく出す 1 行。無ければ空でよい。
+	// 字は面板が持つ im::fonts（resize() が作る）。窓側の帯と品書きは
+	// 16 px の固定の組を使うので，这里的 f は渡さない
 	void paint_front(ImDrawList *dl, const snapshot &s, u64 pressed,
-	                 double volume, const char *status,
-	                 const im::fonts &f) const;
-	void paint_editor(ImDrawList *dl, const char *status,
-	                  const im::fonts &f) const;
-	void paint_effects(ImDrawList *dl, const char *status,
-	                   const im::fonts &f) const;
+	                 double volume, const char *status) const;
+	void paint_editor(ImDrawList *dl, const char *status) const;
+	void paint_effects(ImDrawList *dl, const char *status) const;
+	// LCD だけを出すモード（--lcd-only）。それ以外は面のどれか
+	void paint(ImDrawList *dl, const snapshot &s, u64 pressed, const char *status) const;
+
+	// The panel's own lettering, at the six sizes resize() works out. The
+	// window's button strip and the popups use the fixed 16 px set instead
+	// (imgui_shell.h), so those are not routed through here
+	const im::fonts &fonts() const { return m_fonts; }
 
 	const std::vector<spot> &spots() const { return m_spots; }
 
@@ -149,14 +157,47 @@ private:
 	void build_editor_spots();
 	void build_effect_spots();
 
-	void draw_lcd(ImDrawList *dl, const snapshot &s, const im::fonts &f) const;
+	// ---- 面板の字。窓の大きさと LCD の寸法から 6 つの大きさを作って、
+	// 設定しだいが同じなら作り直さない（ImGui は大きさごとに字を描く）
+	void build_fonts();
+	void drop_fonts();
+
+	// ---- LCD
+	// The dimensions inside the LCD window. d is the dot pitch, x0/y0 the top
+	// left of the upper face and sy the top of the lower one; fx0/fy0/fsy are
+	// the same numbers unrounded, which matters because a dot is only a few
+	// pixels and ImGui can draw it at a fractional size. The legends below the
+	// window take their positions from the same numbers, so the legend and the
+	// thing it names cannot drift apart.
+	struct lcd_geom {
+		double d, pad;                 // dot pitch, border
+		double fx0, fy0, fsy;
+		int    x0, y0, sy;             // the same, rounded to whole pixels
+		int    tick_h, line_h, scale_h;
+	};
+	lcd_geom lcd_grid() const;
+	// Height in the tick band, as a fraction: 0 is the band's top, 1 its bottom
+	int band_y(const lcd_geom &g, double f) const;
+	// The MIC and LINE boxes (MIC on top)
+	void lcd_tag_boxes(const lcd_geom &g, RECT out[2]) const;
+
+	void draw_lcd(ImDrawList *dl, const snapshot &s) const;
+	void draw_lcd_body(ImDrawList *dl, const snapshot &s, const lcd_geom &g) const;
+	void draw_lcd_labels(ImDrawList *dl, const snapshot &s, const lcd_geom &g) const;
+	void draw_lcd_message(ImDrawList *dl, const snapshot &s) const;
+
+	void draw_grid(ImDrawList *dl) const;
 	void draw_button(ImDrawList *dl, const spot &sp, bool down) const;
+	// Key-top printing, for when the labels come from the art instead of the
+	// code (panel.txt labels_in_art)
+	void draw_key_print(ImDrawList *dl, const RECT &key, const char *label,
+	                    const char *sub, mu2000::button b, bool down) const;
 	void draw_wheel(ImDrawList *dl, int angle) const;
-	void draw_volume(ImDrawList *dl, double v, const im::fonts &f) const;
-	void draw_tabs(ImDrawList *dl, const im::fonts &f) const;
-	void draw_grid(ImDrawList *dl, const im::fonts &f) const;
-	void draw_knob(ImDrawList *dl, const spot &sp, const im::fonts &f) const;
-	void draw_list(ImDrawList *dl, const spot &sp, const im::fonts &f) const;
+	void draw_volume(ImDrawList *dl, double v) const;
+	void draw_adgain(ImDrawList *dl) const;
+	void draw_tabs(ImDrawList *dl) const;
+	void draw_knob(ImDrawList *dl, const spot &sp) const;
+	void draw_list(ImDrawList *dl, const spot &sp) const;
 	std::string fx_text(int ctl) const;
 	void fx_bounds(int ctl, bool &at_min, bool &at_max) const;
 	void step_fx(int ctl, int step, bridge &br);
@@ -176,6 +217,7 @@ private:
 
 	page m_page = page::front;
 	std::vector<spot> m_spots;
+	RECT m_adgain{};
 	RECT m_lcd{}, m_wheel{}, m_volume{}, m_status{}, m_hint{}, m_leds[6]{};
 
 	// 掴んでいるもの
@@ -198,6 +240,8 @@ private:
 	// ダイヤルを掴んで上下に動かしているとき（editor.cpp の press / drag）。まだ目盛りにならない端の画素
 	double m_dial_rest = 0.0;
 	double m_volume_now = 1.0;
+	// The A/D INPUT knob (0-1). It only turns for now, it drives nothing
+	double m_adgain_now = 0.45;
 
 	// ---- エディタとエフェクトの面の値。**画面では覚えない**。
 	// 音源に問い合わせた返事をパラメータの層（doc/params.md）が持っていて、
@@ -206,6 +250,15 @@ private:
 	xg::model m_xg;
 	xg_snapshot m_ram;           // 音声の糸が写した RAM（画面の糸だけが触る）
 	u64 m_ram_serial = 0;
+
+	// ---- 字
+	im::fonts m_fonts;
+	int m_font_px[6] = {};        // label small tiny key tag num。0 ならまだ無い
+	ImGuiContext *m_font_ctx = nullptr;   // the context the six were added to
+
+	// キートップの記号（− ＋ ◀ ▶）。縁をぼかした絵。大きさが変わるたびに作る
+	std::shared_ptr<svg_art> m_key_sym[4];
+	int m_key_sym_px = 0;
 
 	bool   m_grid = false;
 	bool   m_lcd_only = false;

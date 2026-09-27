@@ -19,7 +19,6 @@
 #include <windowsx.h>
 #include <shellapi.h>
 
-<<<<<<< HEAD
 #include <algorithm>
 #include <cmath>
 
@@ -29,7 +28,6 @@ namespace ui {
 
 namespace {
 
-<<<<<<< HEAD
 double lcd_aspect()
 {
 	const double h = g_win->panel.lay().lcd[3];

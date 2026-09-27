@@ -4,6 +4,7 @@
 #include "png.h"
 
 #include "ui/draw_imgui.h"
+#include "ui/tex.h"
 
 #include <algorithm>
 #include <cctype>
@@ -459,7 +460,7 @@ bool svg_art::load_text(const std::string &text)
 void svg_art::draw(ImDrawList *dl, const RECT &dst, double deg) const
 {
 	if (!m_mips.empty()) {
-		draw_image(dc, dst, deg);
+		draw_image(dl, dst, deg);
 		return;
 	}
 	if (m_shapes.empty())
@@ -527,38 +528,11 @@ void svg_art::draw(ImDrawList *dl, const RECT &dst, double deg) const
 
 
 // ---- 画像のとき
-
-void blit_premul(HDC dc, int x, int y, int w, int h, const uint32_t *px, bool opaque)
-{
-#if defined(_WIN32)
-	BITMAPINFO bi{};
-	bi.bmiHeader.biSize = sizeof(bi.bmiHeader);
-	bi.bmiHeader.biWidth = w;
-	bi.bmiHeader.biHeight = -h;                        // 上から下へ
-	bi.bmiHeader.biPlanes = 1;
-	bi.bmiHeader.biBitCount = 32;
-	bi.bmiHeader.biCompression = BI_RGB;
-	if (opaque) {
-		StretchDIBits(dc, x, y, w, h, 0, 0, w, h, px, &bi, DIB_RGB_COLORS, SRCCOPY);
-		return;
-	}
-	void *bits = nullptr;
-	HBITMAP bm = CreateDIBSection(dc, &bi, DIB_RGB_COLORS, &bits, nullptr, 0);
-	if (!bm)
-		return;
-	std::memcpy(bits, px, size_t(w) * size_t(h) * 4);
-	HDC mem = CreateCompatibleDC(dc);
-	HGDIOBJ old = SelectObject(mem, bm);
-	BLENDFUNCTION bf{ AC_SRC_OVER, 0, 255, AC_SRC_ALPHA };
-	GdiAlphaBlend(dc, x, y, w, h, mem, 0, 0, w, h, bf);
-	SelectObject(mem, old);
-	DeleteDC(mem);
-	DeleteObject(bm);
-#else
-	(void)opaque;
-	smu_blit_premul(dc, x, y, w, h, px);
-#endif
-}
+//
+// GDI のときは出来上がりの 1 枚を DIB にして AlphaBlend で貼っていた。
+// ここでは同じ 1 枚を ImGui のテクスチャに置いてから AddImage で置くだけ
+// （mi::tex が contexts ごと TextureData を持ってくれるので、
+// DX11 / Metal / SDL_Renderer のどれでも同じ 3 行で済む）
 
 namespace {
 
@@ -568,6 +542,19 @@ uint32_t premul(uint32_t c)
 	if (a == 255)
 		return c;
 	auto m = [&](int sh) { return (((c >> sh) & 0xff) * a + 127) / 255; };
+	return (a << 24) | (m(16) << 16) | (m(8) << 8) | m(0);
+}
+
+// α を戻す。ミップと補間はかけたまま（错的でない）行い、テクスチャへ渡す
+// 1 枚だけ戻す。DX11 / Metal / SDLRenderer はどれも SRC_ALPHA 合成
+uint32_t unpremul(uint32_t c)
+{
+	const uint32_t a = c >> 24;
+	if (a == 255 || a == 0)
+		return a == 0 ? 0u : c;
+	auto m = [&](int sh) {
+		return std::min<uint32_t>(255, (((c >> sh) & 0xff) * 255 + a / 2) / a);
+	};
 	return (a << 24) | (m(16) << 16) | (m(8) << 8) | m(0);
 }
 
@@ -627,31 +614,57 @@ bool svg_art::load_pixels(int w, int h, const std::vector<uint32_t> &raw)
 	return true;
 }
 
-void svg_art::draw_image(HDC dc, const RECT &dst, double deg) const
+void svg_art::release_gpu() const
+{
+	delete static_cast<im::tex *>(m_cache.gpu);
+	m_cache.gpu = nullptr;
+}
+
+// The texture is the picture resampled to about the size it gets drawn at, so
+// the GPU never has to minify it (ImGui textures have no mipmaps, and the
+// panel art is 2000 px wide landing in about 900 -- that would shimmer). The
+// downscaling itself is load_pixels' 2x2 box filter, one mip level at a time.
+//
+// The size is **rounded down to a multiple of this**, which matters more than it
+// looks. The panel coordinates are fractional, so `scale()` hands neighbouring
+// buttons rectangles one pixel apart (the 18 category keys come out 48 or 49
+// wide), and a size that tracked the rectangle exactly would remake the texture
+// between two calls in the *same* frame. That frees a texture the draw list
+// already points at, and the Metal window died on it with "ImDrawCmd is
+// referring to ImTextureData that wasn't uploaded". Rounding down keeps every
+// use of one picture on one texture, and lands the texture just under the
+// destination, so the GPU magnifies a little rather than minifies -- which is
+// the harmless direction.
+static constexpr int SIZE_GRAIN = 8;
+static int grain(int px) { return std::max(SIZE_GRAIN, px / SIZE_GRAIN * SIZE_GRAIN); }
+
+void svg_art::draw_image(ImDrawList *dl, const RECT &dst, double deg) const
 {
 	const int dw = dst.right - dst.left, dh = dst.bottom - dst.top;
-	if (dw <= 0 || dh <= 0)
+	if (dw <= 0 || dh <= 0 || m_mips.empty())
 		return;
+	const level &base = m_mips[0];
 
-	if (m_cache.w != dw || m_cache.h != dh || m_cache.deg != deg || m_cache.px.empty()) {
-		const level &base = m_mips[0];
-		// 縦横比は保つ。余りは真ん中に
-		const double k = std::min(double(dw) / base.w, double(dh) / base.h);
-		const double ix0 = (dw - base.w * k) / 2, iy0 = (dh - base.h * k) / 2;
+	// Where the picture sits inside dst: aspect kept, centered
+	const double k = std::min(double(dw) / base.w, double(dh) / base.h);
+	const double pw = base.w * k, ph = base.h * k;
+	const double cx = (dst.left + dst.right) * 0.5, cy = (dst.top + dst.bottom) * 0.5;
+	const double x0 = cx - pw / 2, y0 = cy - ph / 2;
 
-		// 1 画素が元の 1-2 画素に当たる段を選ぶ
-		double s = 1.0 / k;
+	const int tw = grain(int(std::ceil(pw)));
+	const int th = grain(int(std::ceil(ph)));
+
+	im::tex *t = static_cast<im::tex *>(m_cache.gpu);
+	if (!t) {
+		t = new im::tex;
+		m_cache.gpu = t;
+	}
+	if (!t->valid() || m_cache.w != tw || m_cache.h != th) {
+		// 一番深い段（1/2, 1/4 …）から、足りる 段まで戻る
 		size_t li = 0;
-		while (li + 1 < m_mips.size() && s >= 2.0) {
-			s /= 2.0;
+		while (li + 1 < m_mips.size() && m_mips[li + 1].w >= tw)
 			li++;
-		}
 		const level &L = m_mips[li];
-		const double to_l = 1.0 / double(1u << li);
-
-		const double cx = dw / 2.0, cy = dh / 2.0;
-		const double rad = deg * 3.14159265358979 / 180.0;
-		const double cs = std::cos(rad), sn = std::sin(rad);
 
 		auto fetch = [&](int x, int y) -> uint32_t {
 			x = std::max(0, std::min(x, L.w - 1));
@@ -659,41 +672,65 @@ void svg_art::draw_image(HDC dc, const RECT &dst, double deg) const
 			return L.px[size_t(y) * L.w + x];
 		};
 
-		m_cache.w = dw;
-		m_cache.h = dh;
-		m_cache.deg = deg;
-		m_cache.px.assign(size_t(dw) * size_t(dh), 0);
-		bool opaque = true;
-		for (int y = 0; y < dh; y++)
-			for (int x = 0; x < dw; x++) {
-				double px = x + 0.5, py = y + 0.5;
-				if (deg != 0.0) {
-					// 描くときに回すのと逆向きに戻して、元の絵のどこかを探す
-					const double dx = px - cx, dy = py - cy;
-					px = cx + dx * cs + dy * sn;
-					py = cy - dx * sn + dy * cs;
-				}
-				const double u = (px - ix0) / k, v = (py - iy0) / k;
+		std::vector<uint32_t> px(size_t(tw) * size_t(th), 0);
+		for (int y = 0; y < th; y++)
+			for (int x = 0; x < tw; x++) {
+				const double u = (x + 0.5) * L.w / tw - 0.5;
+				const double v = (y + 0.5) * L.h / th - 0.5;
+				const int ix = int(std::floor(u)), iy = int(std::floor(v));
+				const double tx = u - ix, ty = v - iy;
+				const uint32_t a = fetch(ix, iy), b = fetch(ix + 1, iy);
+				const uint32_t c = fetch(ix, iy + 1), d = fetch(ix + 1, iy + 1);
 				uint32_t out = 0;
-				if (u >= 0 && v >= 0 && u < base.w && v < base.h) {
-					const double fu = u * to_l - 0.5, fv = v * to_l - 0.5;
-					const int x0 = int(std::floor(fu)), y0 = int(std::floor(fv));
-					const double tx = fu - x0, ty = fv - y0;
-					const uint32_t a = fetch(x0, y0), b = fetch(x0 + 1, y0);
-					const uint32_t c = fetch(x0, y0 + 1), d = fetch(x0 + 1, y0 + 1);
-					for (int sh = 0; sh < 32; sh += 8) {
-						const double top = ((a >> sh) & 0xff) * (1 - tx) + ((b >> sh) & 0xff) * tx;
-						const double bot = ((c >> sh) & 0xff) * (1 - tx) + ((d >> sh) & 0xff) * tx;
-						out |= uint32_t(std::lround(top * (1 - ty) + bot * ty)) << sh;
-					}
+				for (int sh = 0; sh < 32; sh += 8) {
+					const double top = ((a >> sh) & 0xff) * (1 - tx) + ((b >> sh) & 0xff) * tx;
+					const double bot = ((c >> sh) & 0xff) * (1 - tx) + ((d >> sh) & 0xff) * tx;
+					out |= uint32_t(std::lround(top * (1 - ty) + bot * ty)) << sh;
 				}
-				if ((out >> 24) != 255)
-					opaque = false;
-				m_cache.px[size_t(y) * dw + x] = out;
+				// 補間はかけたまま（错的でない）して、ここだけ戻して texture へ
+				px[size_t(y) * tw + x] = unpremul(out);
 			}
-		m_cache.opaque = opaque;
+		m_cache.w = tw;
+		m_cache.h = th;
+		t->upload(tw, th, px);
 	}
-	blit_premul(dc, dst.left, dst.top, dw, dh, m_cache.px.data(), m_cache.opaque);
+	if (!t->valid())
+		return;                        // context が無い（描く先が無い）
+
+	// 角度を付けて 4 隅を置く。deg を 0 にするとただの AddImage と同じ。
+	// 回すのは絵ではなくこの四角の 4 隅なので、つまみを回してもテクスチャは
+	// 一切触らない（GDI ではここに絵を焼き直していた）
+	const double rad = deg * 3.14159265358979 / 180.0;
+	const double cs = std::cos(rad), sn = std::sin(rad);
+	auto corner = [&](double x, double y) {
+		const double dx = x - cx, dy = y - cy;
+		return ImVec2(float(cx + dx * cs - dy * sn), float(cy + dx * sn + dy * cs));
+	};
+	// The picture goes out as a grid of quads, each at most this big. A single
+	// large textured quad does not survive the trip: through SDL_Renderer (the
+	// --shot path) only one of its two triangles reaches the screen, so the
+	// panel art showed up cut along the diagonal from the top-left to the
+	// bottom-right corner. The command data is right -- the indices, the four
+	// corners and the texture all check out when dumped from inside the
+	// backend -- and it is size-dependent, so it is a rasterizer limit rather
+	// than something the draw list got wrong: a 1335x514 quad loses a
+	// triangle, 1335x257 and 664x514 do not. Same code, same texture, same
+	// frame; only the quad is smaller. Tiles cost a handful of extra quads and
+	// they all share one texture, so they still go out in a single command.
+	static constexpr float TILE = 256.0f;
+	const int nx = std::max(1, int(std::ceil(pw / TILE)));
+	const int ny = std::max(1, int(std::ceil(ph / TILE)));
+	for (int j = 0; j < ny; j++) {
+		for (int i = 0; i < nx; i++) {
+			const double xa = x0 + pw * i / nx, xb = x0 + pw * (i + 1) / nx;
+			const double ya = y0 + ph * j / ny, yb = y0 + ph * (j + 1) / ny;
+			const ImVec2 ua(float(i) / float(nx), float(j) / float(ny));
+			const ImVec2 ub(float(i + 1) / float(nx), float(j + 1) / float(ny));
+			dl->AddImageQuad(t->ref(),
+			                 corner(xa, ya), corner(xb, ya), corner(xb, yb), corner(xa, yb),
+			                 ua, ImVec2(ub.x, ua.y), ub, ImVec2(ua.x, ub.y));
+		}
+	}
 }
 
 } // namespace ui

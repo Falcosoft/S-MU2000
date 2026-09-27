@@ -120,7 +120,7 @@ struct plug_view::impl
 		std::snprintf(status, sizeof(status), "%s", eng.message().c_str());
 
 		panel.set_volume(eng.panel().gain());
-		panel.paint_front(dl, s, eng.panel().buttons(), eng.panel().gain(), status, fonts);
+		panel.paint(dl, s, eng.panel().buttons(), status);
 		// 帯はパネルの**あと**に描く（パネルは全面を塗る）
 		bar.paint(dl, panel.width(), fonts.label, fonts.label_px);
 	}

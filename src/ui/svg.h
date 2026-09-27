@@ -43,7 +43,7 @@ public:
 	// 画素から作る。1 画素 0xAARRGGBB、α はかけていない値（read_png と同じ）
 	bool load_pixels(int w, int h, const std::vector<uint32_t> &argb);
 	bool ok() const { return !m_shapes.empty() || !m_mips.empty(); }
-	void clear() { m_shapes.clear(); m_mips.clear(); m_cache = cache{}; }
+	void clear() { release_gpu(); m_shapes.clear(); m_mips.clear(); m_cache = cache{}; }
 
 	// viewBox（画像なら画像の大きさ）を dst に当てはめて描く。縦横比は保ったまま
 	// 真ん中に置く。deg を渡すと、dst の真ん中を軸にその角度だけ回す（つまみ用）。
@@ -59,16 +59,20 @@ private:
 		int w = 0, h = 0;
 		std::vector<uint32_t> px;
 	};
-	// 出来上がりの 1 枚。テクスチャへ渡すので α は戻してある（0xAARRGGBB）
+	// 1 枚にした絵。テクスチャへ入れるので α は戻してある（0xAARRGGBB）
 	struct cache {
-		int w = 0, h = 0;
-		double deg = 0;
-		std::vector<uint32_t> px;      // straight alpha
-		mutable void *gpu = nullptr;   // im::tex（ui/imgui_shell.h）の所有物
-		mutable int   gpu_w = 0, gpu_h = 0;
+		int w = 0, h = 0;                // 付けた dst の大きさ。変わったら作り直す
+		std::vector<uint32_t> px;        // straight alpha, ready for the texture
+		void *gpu = nullptr;             // im::tex (ui/tex.h), freed by release_gpu()
 	};
 	bool load_png(const std::string &path);
+	// The picture, as one quad. deg turns it about the middle of dst: the
+	// rotation is the quad's four corners, not a new bitmap, so a knob turns
+	// without the texture being touched
 	void draw_image(ImDrawList *dl, const RECT &dst, double deg) const;
+	// Drops the texture. The context may already have taken it (see ui/tex.h);
+	// the tex object empties itself in that case, so this is always safe
+	void release_gpu() const;
 	std::vector<level> m_mips;
 	mutable cache m_cache;
 

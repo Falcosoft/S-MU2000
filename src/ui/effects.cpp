@@ -186,7 +186,7 @@ void panel::step_fx(int ctl, int step, bridge &br)
 }
 
 // The effects list through an ImDrawList.
-void panel::draw_list(ImDrawList *dl, const spot &sp, const im::fonts &f) const
+void panel::draw_list(ImDrawList *dl, const spot &sp) const
 {
 	im::round_box(dl, sp.r, RGB(40, 43, 48), RGB(88, 93, 100), float(4 * m_scale));
 
@@ -196,7 +196,7 @@ void panel::draw_list(ImDrawList *dl, const spot &sp, const im::fonts &f) const
 	inner.right -= edge;
 	const std::string label = fx_text(sp.ctl);
 	im::text_in(dl, im::pos_of(inner), im::size_of(inner), label.c_str(),
-	            label == "--" ? TEXT_DIM : TEXT, f.small, f.small_px, true, true, false);
+	            label == "--" ? TEXT_DIM : TEXT, m_fonts.small, m_fonts.small_px, true, true, false);
 
 	RECT l = sp.r, r = sp.r;
 	l.right = l.left + edge;
@@ -204,9 +204,9 @@ void panel::draw_list(ImDrawList *dl, const spot &sp, const im::fonts &f) const
 	bool at_min, at_max;
 	fx_bounds(sp.ctl, at_min, at_max);
 	im::text_in(dl, im::pos_of(l), im::size_of(l), "<", at_min ? RGB(80, 84, 90) : ACCENT,
-	            f.small, f.small_px, true, true, false);
+	            m_fonts.small, m_fonts.small_px, true, true, false);
 	im::text_in(dl, im::pos_of(r), im::size_of(r), ">", at_max ? RGB(80, 84, 90) : ACCENT,
-	            f.small, f.small_px, true, true, false);
+	            m_fonts.small, m_fonts.small_px, true, true, false);
 }
 
 
@@ -225,7 +225,7 @@ void panel::build_effect_spots()
 }
 
 // effects page through ui/draw_imgui.h.
-void panel::paint_effects(ImDrawList *dl, const char *status, const im::fonts &f) const
+void panel::paint_effects(ImDrawList *dl, const char *status) const
 {
 	RECT all{ 0, 0, m_w, m_h };
 	im::fill(dl, all, BODY);
@@ -234,46 +234,46 @@ void panel::paint_effects(ImDrawList *dl, const char *status, const im::fonts &f
 
 	im::text_in(dl, im::pos_of(scale(20, 6, 460, 16)), im::size_of(scale(20, 6, 460, 16)),
 	            UI_TEXT(effects_title, "Effects (sending XG parameter changes)"), TEXT_DIM,
-	            f.small, f.small_px, false, true, false);
+	            m_fonts.small, m_fonts.small_px, false, true, false);
 
 	for (const fx_row &row : ROWS) {
 		im::text_in(dl, im::pos_of(scale(20, row.y + 4, 120, 16)),
 		            im::size_of(scale(20, row.y + 4, 120, 16)),
-		            row.title, TEXT, f.small, f.small_px);
+		            row.title, TEXT, m_fonts.small, m_fonts.small_px);
 		double x = COL_X;
 		for (int i = 0; i < 3; i++) {
 			if (row.ctl[i] == CTL_NONE)
 				continue;
 			im::text_in(dl, im::pos_of(scale(x, row.y - 13, row.w[i], 12)),
 			            im::size_of(scale(x, row.y - 13, row.w[i], 12)),
-			            row.label[i], TEXT_DIM, f.small, f.small_px);
+			            row.label[i], TEXT_DIM, m_fonts.small, m_fonts.small_px);
 			x += row.w[i] + 24;
 		}
 	}
 
 	for (const spot &sp : m_spots) {
 		if (sp.kind == spot_kind::list)
-			draw_list(dl, sp, f);
+			draw_list(dl, sp);
 		else if (sp.kind == spot_kind::action) {
 			im::round_box(dl, sp.r, BTN_FACE, BTN_EDGE, float(5 * m_scale));
 			im::text_in(dl, im::pos_of(sp.r), im::size_of(sp.r), sp.label, TEXT,
-			            f.small, f.small_px, true, true, false);
+			            m_fonts.small, m_fonts.small_px, true, true, false);
 		}
 	}
 
 	im::text_in(dl, im::pos_of(scale(150, 356, 830, 20)), im::size_of(scale(150, 356, 830, 20)),
 	            UI_TEXT(effects_values_note, "Values are read back from the MU2000. Changes from the panel or songs appear here too."),
-	            RGB(104, 109, 116), f.small, f.small_px);
+	            RGB(104, 109, 116), m_fonts.small, m_fonts.small_px);
 	im::text_in(dl, im::pos_of(scale(150, 324, 830, 34)), im::size_of(scale(150, 324, 830, 34)),
 	            UI_TEXT(effects_insertion_note, "Insertion works on the selected part. Variation can be used as insertion\n"
 	                                            "by setting CONNECT to INSERTION."),
-	            RGB(104, 109, 116), f.small, f.small_px, false, false, true);
+	            RGB(104, 109, 116), m_fonts.small, m_fonts.small_px, false, false, true);
 
 	if (status && status[0])
 		im::text_in(dl, im::pos_of(m_status), im::size_of(m_status), status,
-		            TEXT_DIM, f.small, f.small_px, false, true, false);
+		            TEXT_DIM, m_fonts.small, m_fonts.small_px, false, true, false);
 
-	draw_tabs(dl, f);
+	draw_tabs(dl);
 }
 
 } // namespace ui

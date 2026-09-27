@@ -16,6 +16,8 @@
 #pragma once
 
 #include "ui/draw_imgui.h"
+#include "ui/font_file.h"
+#include "ui/tex.h"
 
 #include "imgui.h"
 
@@ -35,7 +37,6 @@
 #include <windows.h>
 #elif defined(__APPLE__)
 #include "backends/imgui_impl_metal.h"
-#include <CoreText/CoreText.h>
 #else
 #include <fontconfig/fontconfig.h>
 #endif
@@ -52,86 +53,25 @@ namespace imshell {
 
 // ---- fonts ---------------------------------------------------------------
 //
-// The panel's CJK font in all three slots at 16 px, found the way each
-// platform finds it (never a hard-coded path). Falls back to the embedded
-// font (slots stay null: English only). Adds to the current context, so
-// call it after SetCurrentContext (new_context below does both).
+// One CJK font in all three slots at 16 px, from ui/font_file.h. Falls back
+// to the embedded font (slots stay null: English only). Adds to the current
+// context, so call it after SetCurrentContext (new_context below does both).
+//
+// **This set is only for the window's own pieces** -- the button strip, the
+// popups. The panel picture does not use it: panel.cpp rasterizes its own six
+// sizes whenever the window changes size, because the LCD lettering is 4-9 px
+// and one 16 px font scaled down is unreadable there.
 inline im::fonts panel_fonts()
 {
 	im::fonts f{};
-#if defined(_WIN32)
-	static const char *const NAMES[] = {
-		"C:\\Windows\\Fonts\\YuGothM.ttc",
-		"C:\\Windows\\Fonts\\meiryo.ttc",
-		"C:\\Windows\\Fonts\\msgothic.ttc",
-	};
-	for (const char *path : NAMES) {
-		if (ImFont *font = ImGui::GetIO().Fonts->AddFontFromFileTTF(path, 16.0f)) {
+	size_t bytes = 0;
+	if (const void *data = cjk_font_data(bytes)) {
+		ImFontConfig cfg;
+		cfg.FontDataOwnedByAtlas = false;      // ours, and it outlives the atlas
+		if (ImFont *font = ImGui::GetIO().Fonts->AddFontFromMemoryTTF(
+		        const_cast<void *>(data), int(bytes), 16.0f, &cfg))
 			f.label = f.small = f.tiny = font;
-			break;
-		}
 	}
-#elif defined(__APPLE__)
-	static const char *const NAMES[] = {
-		"Hiragino Sans",
-		"Hiragino Kaku Gothic ProN",
-		"Hiragino Kaku Gothic Pro",
-		"Hiragino Sans GB",
-		"Osaka",
-	};
-	for (const char *name : NAMES) {
-		CFStringRef family = CFStringCreateWithCString(nullptr, name, kCFStringEncodingUTF8);
-		if (!family)
-			continue;
-		const void *keys[]   = { kCTFontFamilyNameAttribute };
-		const void *values[] = { family };
-		CFDictionaryRef attrs = CFDictionaryCreate(nullptr, keys, values, 1,
-		                                           &kCFTypeDictionaryKeyCallBacks,
-		                                           &kCFTypeDictionaryValueCallBacks);
-		CFRelease(family);
-		if (!attrs)
-			continue;
-		CTFontDescriptorRef desc = CTFontDescriptorCreateWithAttributes(attrs);
-		CFRelease(attrs);
-		if (!desc)
-			continue;
-		CFURLRef url = (CFURLRef)CTFontDescriptorCopyAttribute(desc, kCTFontURLAttribute);
-		CFRelease(desc);
-		std::string path;
-		if (url) {
-			char buf[1024] = {};
-			if (CFURLGetFileSystemRepresentation(url, true, (UInt8 *)buf, sizeof(buf)))
-				path = buf;
-			CFRelease(url);
-		}
-		if (!path.empty()) {
-			if (ImFont *font = ImGui::GetIO().Fonts->AddFontFromFileTTF(path.c_str(), 16.0f)) {
-				f.label = f.small = f.tiny = font;
-				break;
-			}
-		}
-	}
-#else
-	FcPattern *pat = FcPatternCreate();
-	if (pat) {
-		FcPatternAddString(pat, FC_FAMILY, reinterpret_cast<const FcChar8 *>("Noto Sans CJK JP"));
-		FcPatternAddDouble(pat, FC_SIZE, 16.0);
-		FcConfigSubstitute(nullptr, pat, FcMatchPattern);
-		FcDefaultSubstitute(pat);
-		FcResult res = FcResultNoMatch;
-		FcPattern *m = FcFontMatch(nullptr, pat, &res);
-		if (m) {
-			FcChar8 *file = nullptr;
-			if (FcPatternGetString(m, FC_FILE, 0, &file) == FcResultMatch && file) {
-				if (ImFont *font = ImGui::GetIO().Fonts->AddFontFromFileTTF(
-				        reinterpret_cast<const char *>(file), 16.0f))
-					f.label = f.small = f.tiny = font;
-			}
-			FcPatternDestroy(m);
-		}
-		FcPatternDestroy(pat);
-	}
-#endif
 	if (!f.label)
 		ImGui::GetIO().Fonts->AddFontDefault();   // the atlas needs a font
 	return f;
@@ -212,6 +152,9 @@ inline void dx11_stop(dx11_state &st)
 {
 	if (st.imgui) {
 		ImGui::SetCurrentContext(st.imgui);
+		// 絵のテクスチャは panel が見ている。まだ panel があるうちに
+		// 登録を消さないと、窓のあとで panel が残る場合に参照が残る
+		im::drop_user_textures();
 		ImGui_ImplDX11_Shutdown();
 		if (st.swap)
 			ImGui_ImplWin32_Shutdown();
@@ -328,6 +271,7 @@ inline void metal_stop(ImGuiContext *&ctx)
 	if (!ctx)
 		return;
 	ImGui::SetCurrentContext(ctx);
+	im::drop_user_textures();      // the panel's textures, see dx11_stop
 	ImGui_ImplMetal_Shutdown();
 	ImGui::DestroyContext(ctx);
 	ctx = nullptr;

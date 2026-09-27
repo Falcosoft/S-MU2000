@@ -57,7 +57,7 @@ inline void shot_frame(ImDrawList *dl, const im::fonts &f, int w, int h,
 	snapshot s;
 	br.read(s);
 	p.set_volume(0.8);
-	p.paint_front(dl, s, 0, 0.8, "", f);
+	p.paint(dl, s, 0, "");
 	if (!lcd_only)
 		bar.paint(dl, w, f.label, f.label_px);
 }

@@ -109,7 +109,7 @@ bool panel::tick(bridge &br)
 }
 
 // A voice knob through an ImDrawList.
-void panel::draw_knob(ImDrawList *dl, const spot &sp, const im::fonts &f) const
+void panel::draw_knob(ImDrawList *dl, const spot &sp) const
 {
 	// つまみの場所は「丸の中心 = 枠の上から 26、半径 18」と決めてある
 	const double PI = 3.14159265358979;
@@ -151,17 +151,17 @@ void panel::draw_knob(ImDrawList *dl, const spot &sp, const im::fonts &f) const
 	RECT lab{ sp.r.left, sp.r.top + int(44 * m_scale),
 	          sp.r.right, sp.r.top + int(55 * m_scale) };
 	im::text_in(dl, im::pos_of(lab), im::size_of(lab), sp.label, TEXT_DIM,
-	            f.small, f.small_px, true, false, false);
+	            m_fonts.small, m_fonts.small_px, true, false, false);
 
 	const std::string num = (known && p) ? xg::format(*p, v) : "--";
 	RECT val{ sp.r.left, sp.r.top + int(54 * m_scale),
 	          sp.r.right, sp.r.top + int(66 * m_scale) };
 	im::text_in(dl, im::pos_of(val), im::size_of(val), num.c_str(), known ? TEXT : TEXT_DIM,
-	            f.small, f.small_px, true, false, false);
+	            m_fonts.small, m_fonts.small_px, true, false, false);
 }
 
 // editor page through ui/draw_imgui.h.
-void panel::paint_editor(ImDrawList *dl, const char *status, const im::fonts &f) const
+void panel::paint_editor(ImDrawList *dl, const char *status) const
 {
 	RECT all{ 0, 0, m_w, m_h };
 	im::fill(dl, all, BODY);
@@ -171,7 +171,7 @@ void panel::paint_editor(ImDrawList *dl, const char *status, const im::fonts &f)
 	// パート
 	RECT lab = scale(26, 26, 120, 16);
 	im::text_in(dl, im::pos_of(lab), im::size_of(lab), "PART", TEXT_DIM,
-	            f.small, f.small_px);
+	            m_fonts.small, m_fonts.small_px);
 
 	for (const spot &sp : m_spots) {
 		switch (sp.kind) {
@@ -181,16 +181,16 @@ void panel::paint_editor(ImDrawList *dl, const char *status, const im::fonts &f)
 			char n[8];
 			std::snprintf(n, sizeof(n), "%d", sp.ctl - CTL_PART + 1);
 			im::text_in(dl, im::pos_of(sp.r), im::size_of(sp.r), n, on ? RGB(18, 26, 12) : TEXT,
-			            f.small, f.small_px, true, true, false);
+			            m_fonts.small, m_fonts.small_px, true, true, false);
 			break;
 		}
 		case spot_kind::knob:
-			draw_knob(dl, sp, f);
+			draw_knob(dl, sp);
 			break;
 		case spot_kind::action:
 			im::round_box(dl, sp.r, BTN_FACE, BTN_EDGE, float(5 * m_scale));
 			im::text_in(dl, im::pos_of(sp.r), im::size_of(sp.r), sp.label, TEXT,
-			            f.small, f.small_px, true, true, false);
+			            m_fonts.small, m_fonts.small_px, true, true, false);
 			break;
 		default:
 			break;
@@ -210,20 +210,20 @@ void panel::paint_editor(ImDrawList *dl, const char *status, const im::fonts &f)
 	              show("part.program").c_str(), show("part.rcv_channel").c_str());
 	RECT info = scale(26, 200, 290, 36);
 	im::text_in(dl, im::pos_of(info), im::size_of(info), line1, TEXT,
-	            f.small, f.small_px, false, false, true);
+	            m_fonts.small, m_fonts.small_px, false, false, true);
 
 	RECT hint = scale(26, 288, 290, 60);
 	im::text_in(dl, im::pos_of(hint), im::size_of(hint),
 	            UI_TEXT(editor_hint, "Drag knobs up/down, or use the wheel.\n"
 	                                  "Sends XG parameter changes.\n"
 	                                  "Values are read back from the MU2000."),
-	            RGB(104, 109, 116), f.small, f.small_px, false, false, true);
+	            RGB(104, 109, 116), m_fonts.small, m_fonts.small_px, false, false, true);
 
 	if (status && status[0])
 		im::text_in(dl, im::pos_of(m_status), im::size_of(m_status), status,
-		            TEXT_DIM, f.small, f.small_px, false, true, false);
+		            TEXT_DIM, m_fonts.small, m_fonts.small_px, false, true, false);
 
-	draw_tabs(dl, f);
+	draw_tabs(dl);
 }
 
 

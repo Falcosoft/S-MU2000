@@ -180,12 +180,10 @@ public:
 		else
 			std::snprintf(status, sizeof(status), "%s", UI_TEXT(status_booting, "Starting..."));
 		panel.set_volume(br.gain());
-		switch (panel.current_page()) {
-		case page::editor:  panel.paint_editor(dl, status, f); break;
-		case page::effects: panel.paint_effects(dl, status, f); break;
-		default:            panel.paint_front(dl, s, pressed, br.gain(), status, f); break;
-		}
-		// The bar paints after the panel (the panel fills everything)
+		panel.paint(dl, s, pressed, status);
+		// The bar paints after the panel (the panel fills everything). It keeps
+		// the window's fixed 16 px set: it does not scale with the panel, so the
+		// panel's own sizes would only make it jump around while resizing
 		bar.paint(dl, w, f.label, f.label_px);
 	}
 

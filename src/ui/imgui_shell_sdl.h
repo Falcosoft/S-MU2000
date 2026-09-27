@@ -49,6 +49,7 @@ inline void sdl_stop(sdl_state &st)
 	if (!st.ctx)
 		return;
 	ImGui::SetCurrentContext(st.ctx);
+	im::drop_user_textures();      // the panel's textures, see imgui_shell.h
 	ImGui_ImplSDLRenderer3_Shutdown();
 	ImGui_ImplSDL3_Shutdown();
 	ImGui::DestroyContext(st.ctx);
