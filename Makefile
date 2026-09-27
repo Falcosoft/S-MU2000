@@ -163,6 +163,37 @@ endif
 endif
 BUILD ?= build
 
+# The per-user data directory -- the same place compat/paths.h's config_dir()
+# points at, where roms/, nvram/ and the .ini files already live. The panel art
+# goes in a panel/ beside them, and find_default() looks there (step 3), which
+# is the only place a one-file plug-in format can keep artwork: a lone .clap or
+# .dll has no bundle to put Resources/panel in.
+#
+# Keyed off PLATFORM, not off uname: this Makefile cross-builds, and asking the
+# *host* would put a Linux or Windows target's art in the macOS directory.
+ifeq ($(PLATFORM),windows)
+# LOCALAPPDATA is a Windows path; the slashes suit cp and mkdir better. It is
+# unset when configuring from another host, and an empty prefix would have the
+# recipe write to "/S-MU2000/panel", so fall back to where MSYS2 puts $HOME.
+PANEL_DATA_DIR := $(if $(LOCALAPPDATA),$(subst \,/,$(LOCALAPPDATA)),$(HOME)/AppData/Local)/S-MU2000/panel
+else ifeq ($(PLATFORM),macos)
+PANEL_DATA_DIR := $(HOME)/Library/Application Support/S-MU2000/panel
+else
+# config_dir() prefers XDG_DATA_HOME when it is set, so ask it first
+PANEL_DATA_DIR := $(if $(XDG_DATA_HOME),$(XDG_DATA_HOME),$(HOME)/.local/share)/S-MU2000/panel
+endif
+
+# The pictures go in unconditionally; panel.txt does not, because that is the
+# one file here a person edits (doc/panel-editing.md) and overwriting it on
+# every install would throw that away. Delete it to get the shipped one back.
+install-panel-art:
+	@mkdir -p "$(PANEL_DATA_DIR)"
+	@cp -f art/real/*.png "$(PANEL_DATA_DIR)/"
+	@cp -n art/real/panel.txt "$(PANEL_DATA_DIR)/" 2>/dev/null || \
+		test -f "$(PANEL_DATA_DIR)/panel.txt" || \
+		cp -f art/real/panel.txt "$(PANEL_DATA_DIR)/"
+	@echo "絵を置いておいた: $(PANEL_DATA_DIR)"
+
 SRCS := \
 	src/compat/compat.cpp \
 	src/smartmedia.cpp \
@@ -441,7 +472,7 @@ $(CLAP_BIN): $(OBJS) $(BUILD)/src/mu2000.o $(CLAP_OBJS) $(PC_OBJS)
 
 CLAP_INSTALL ?= $(PROGRAMFILES)/Common Files/CLAP
 
-install-clap: $(CLAP_BIN)
+install-clap: $(CLAP_BIN) install-panel-art
 	mkdir -p "$(CLAP_INSTALL)"
 	cp -f $(CLAP_BIN) "$(CLAP_INSTALL)/"
 	@echo "入れた: $(CLAP_INSTALL)/S-MU2000.clap"
@@ -468,7 +499,7 @@ $(VSTI_BIN): $(OBJS) $(BUILD)/src/mu2000.o $(VSTI_OBJS) $(PC_OBJS)
 
 VSTI_INSTALL ?= $(PROGRAMFILES)/VstPlugins
 
-install-vsti: $(VSTI_BIN)
+install-vsti: $(VSTI_BIN) install-panel-art
 	mkdir -p "$(VSTI_INSTALL)"
 	cp -f $(VSTI_BIN) "$(VSTI_INSTALL)/"
 	@echo "入れた: $(VSTI_INSTALL)/S-MU2000.dll"
@@ -656,7 +687,7 @@ $(BUILD)/clapprobe$(EXE): $(BUILD)/clapobj/src/clap/probe.o $(BUILD)/src/smf.o $
 
 CLAP_INSTALL ?= $(HOME)/.clap
 
-install-clap: $(CLAP_BIN)
+install-clap: $(CLAP_BIN) install-panel-art
 	mkdir -p "$(CLAP_INSTALL)"
 	cp -f $(CLAP_BIN) "$(CLAP_INSTALL)/"
 	@echo "入れた: $(CLAP_INSTALL)/S-MU2000.clap"
