@@ -199,6 +199,34 @@ So the plug-in implements `IUnitInfo`.
 16 channels connects "unit → 128-voice list → flagged parameter (the same as
 `IMidiMapping` number 130)". Not yet tried in Cubase itself.
 
+### In SONAR, program changes for ports B-D arrive on port A (checked 2026-09-27)
+
+SONAR delivers program changes through `getUnitByBus` like Cubase, but it
+**only ever asks about port A (bus 0)**. A program change sent from a track on
+port B arrives as if it were for the same channel on port A, so the part on
+port A changes voice instead of the one on port B. Notes, control changes and
+pitch bend do reach ports B-D correctly.
+
+The plug-in has no way to tell which port such a program change was really
+meant for, so this cannot be fixed on our side. To set voices for parts on
+ports B-D, send **XG parameter changes** instead of program changes
+(`F0 43 10 4C 08 pp 01 msb F7`, `… 02 lsb F7`, `… 03 prog F7`, where pp is the
+part number 0x10-0x3F). SysEx arrives as an event on its own bus, so the port
+is not lost. REAPER uses `IMidiMapping` number 130 and is not affected.
+
+When the plug-in is stopped (`setActive(false)`) it writes one "per-port"
+line to the log (`%LOCALAPPDATA%\S-MU2000\log.txt`): how many times the host
+asked about CC mappings and units for each port, and how many CCs, program
+changes and note events arrived on each. If something looks wrong in a host
+that uses several ports, look there first. SONAR gives:
+
+```
+CC mapping queries [A 2080 / B 2080 / C 2080 / D 2080], program-change unit queries [A 144 / B 0 / C 0 / D 0],
+CCs received [A 207 / B 63 / …], program changes received [A 23 / B 0 / …], events received (notes etc.) [A 21172 / B 696 / …]
+```
+
+(The log line itself is in Japanese.)
+
 ### Hosts that do not follow the table
 
 Some hosts do not deliver as the table says. VSTHost 1.58 puts program
