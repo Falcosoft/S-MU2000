@@ -25,6 +25,7 @@
 #pragma once
 
 #include "compat/gdi.h"   // COLORREF + GetRValue/GetGValue/GetBValue only
+#include "ui/fonts.h"      // im::fonts -- ImGui only, no <windows.h> on Windows
 
 #include "imgui.h"
 
@@ -59,17 +60,14 @@ inline ImU32 col(COLORREF c, unsigned char a = 255)
 	return IM_COL32(GetRValue(c), GetGValue(c), GetBValue(c), a);
 }
 
-// The panel's font slots. px rides along with each one because ImGui
-// rasterizes per size, and the panel re-rasterizes its own set on every
-// resize (panel.cpp) -- the LCD lettering is 4-9 px and unreadable when it is
-// one 16 px font scaled down. The window's own pieces (the button strip, the
-// popups) use the fixed 16 px set from imgui_shell.h instead.
-struct fonts {
-	ImFont *label = nullptr, *small = nullptr, *tiny = nullptr;
-	ImFont *key = nullptr, *tag = nullptr, *num = nullptr;
-	float label_px = 13.0f, small_px = 8.5f, tiny_px = 6.5f;
-	float key_px = 9.0f, tag_px = 8.0f, num_px = 8.0f;
-};
+// The panel's font slots are ui::im::fonts, in ui/fonts.h: six ImFont pointers
+// and their pixel sizes, and nothing else. px rides along with each one
+// because ImGui rasterizes per size, and the panel re-rasterizes its own set on
+// every resize (panel.cpp) -- the LCD lettering is 4-9 px and unreadable when
+// it is one 16 px font scaled down. The window's own pieces (the button strip,
+// the popups) use the fixed 16 px set from imgui_shell.h instead. The struct
+// lives apart so that vst3/view.h can name it without this header's
+// compat/gdi.h, and with it <windows.h> on Windows.
 
 // Cap height in px, taken from the font's own baked metrics ('A' top to 'A'
 // bottom, unscaled, so it is scaled here). The panel centers its legends on

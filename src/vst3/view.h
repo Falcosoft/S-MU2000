@@ -18,7 +18,10 @@
 
 #include "plug_window.h"
 
-#include "ui/draw_imgui.h"
+#include "ui/fonts.h"      // ui::im::fonts, ImGui only -- NOT ui/draw_imgui.h,
+                           // which needs compat/gdi.h and so <windows.h> on
+                           // Windows, where `interface` is a macro for `struct`
+                           // and the SDK headers have a member by that name
 
 #include "imgui.h"
 
