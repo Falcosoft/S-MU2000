@@ -74,6 +74,10 @@ public:
 	static int default_width();
 	static int default_height();
 
+	// The panel's fonts need an ImGui context and no open frame; the platform
+	// window calls this once its context is up (see panel::fonts_ready)
+	void fonts_ready();
+
 	void repaint(ImDrawList *dl, const ui::im::fonts &fonts, int w, int h);
 	void mouse_down(int x, int y);
 	void mouse_drag(int x, int y);

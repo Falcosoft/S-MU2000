@@ -269,6 +269,11 @@ tresult PLUGIN_API plug_view::checkSizeConstraint(ViewRect *rect)
 
 // ---- Called by the platform window
 
+void plug_view::fonts_ready()
+{
+	m_impl->panel.fonts_ready();
+}
+
 void plug_view::repaint(ImDrawList *dl, const ui::im::fonts &fonts, int w, int h)
 {
 	if (!dl || w <= 0 || h <= 0)

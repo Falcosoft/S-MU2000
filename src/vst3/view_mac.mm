@@ -172,6 +172,7 @@ namespace smu2000 { namespace vst3 { class mac_window; } }
 	_imgui = ui::imshell::new_context();
 	_fonts = ui::imshell::panel_fonts();
 	ImGui_ImplMetal_Init(_mtl_dev);
+	_owner->fonts_ready();
 	return YES;
 }
 

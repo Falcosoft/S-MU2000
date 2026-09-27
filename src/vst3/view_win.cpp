@@ -157,6 +157,7 @@ bool win_window::attach(void *parent, int w, int h)
 		detach();
 		return false;
 	}
+	m_owner.fonts_ready();   // the context is up and no frame is open
 	return true;
 }
 

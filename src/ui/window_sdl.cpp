@@ -118,6 +118,7 @@ int run_window(linux_app &gui, const char *title, int w, int h)
 	}
 	gui.imgui_ctx = im.ctx;         // run_list's menu uses the same frame
 	gui.imgui_fonts = im.fonts;
+	gui.panel.fonts_ready();     // the context is up and no frame is open
 
 	bool down = false;   // left button held: drags go to the panel
 	const Uint64 quit_at = gui.seconds_limit > 0.0

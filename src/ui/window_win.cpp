@@ -167,6 +167,9 @@ LRESULT CALLBACK wnd_proc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp)
 			            MB_OK | MB_ICONERROR);
 			return -1;
 		}
+		// The context is up and no frame is open, so the panel can build its
+		// fonts now (see panel::fonts_ready)
+		g_win->panel.fonts_ready();
 		return 0;
 
 	case WM_TIMER: {

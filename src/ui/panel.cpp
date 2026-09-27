@@ -25,6 +25,7 @@
 #include "texts.h"
 
 #include "imgui.h"
+#include "imgui_internal.h"   // WithinFrameScope, see build_fonts
 
 #include <algorithm>
 #include <cmath>
@@ -242,7 +243,7 @@ panel::~panel()
 	drop_fonts();
 }
 
-void panel::drop_fonts()
+void panel::drop_fonts() const
 {
 	// Only when our context is still around and current. Two ways that is not
 	// so: the panel was built before any window existed (gui.cpp's app is a
@@ -324,11 +325,24 @@ POINT panel::at(double x, double y) const
 // size, so leaving fractions in would rebuild the set on every resize tick.
 // The six sizes come from the window scale and the LCD's own dimensions, and
 // nothing is touched unless one of them actually changed.
-void panel::build_fonts()
+void panel::build_fonts() const
 {
 	ImGuiContext *ctx = ImGui::GetCurrentContext();
 	if (!ctx)
 		return;                             // no context yet: nothing draws
+	// **Not while a frame is open.** Adding or removing a font makes the atlas
+	// repack, and when it needs a bigger texture it makes a new one and marks
+	// the old for destruction at the next NewFrame. ImGui remaps the draw lists
+	// for that, but only their *pending* command header -- commands already
+	// flushed into the buffer keep the old texture, and they are read at the
+	// next Render, by which point that texture is gone. That is the Metal
+	// window's "ImDrawCmd is referring to ImTextureData that wasn't uploaded"
+	// assert, and it needs a resize to set off (a resize is the only thing that
+	// moves the sizes). So the hosts build the fonts right after they create
+	// the context, and a resize rebuilds them between frames, where this is
+	// safe; a call that lands mid-frame is dropped and the next one gets it.
+	if (ctx->WithinFrameScope)
+		return;
 	ImFontAtlas *atlas = ImGui::GetIO().Fonts;
 
 	// キートップの記号。中に「SELECT」が 6 文字入る太字
@@ -389,6 +403,11 @@ void panel::build_fonts()
 	for (int i = 0; i < 6; i++)
 		m_font_px[i] = want[i];
 	m_font_ctx = ctx;
+}
+
+void panel::fonts_ready()
+{
+	build_fonts();
 }
 
 void panel::resize(int w, int h)

@@ -154,6 +154,8 @@ static const unsigned short kKeyCodeF5 = 0x60;
 	_imgui = ui::imshell::new_context();
 	_fonts = ui::imshell::panel_fonts();
 	ImGui_ImplMetal_Init(_mtl_dev);
+	if (_app)
+		_app->panel.fonts_ready();
 	return YES;
 }
 

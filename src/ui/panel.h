@@ -85,6 +85,14 @@ public:
 	int  width() const  { return m_w; }
 	int  height() const { return m_h; }
 
+	// Make the panel's fonts. ImGui's context has to exist and no frame may be
+	// open, so the window code calls this once its context is up: on macOS the
+	// window settles on its final size inside setFrameSize:, before the context
+	// exists, so resize() alone would leave the panel with no fonts at all (and
+	// every label then falls back to ImGui's 16 px default). Safe to repeat --
+	// build_fonts() does nothing unless a size actually moved.
+	void fonts_ready();
+
 	page current_page() const { return m_page; }
 
 	// 音量つまみの見え方。音源側の値をそのまま渡してもらう
@@ -157,10 +165,18 @@ private:
 	void build_editor_spots();
 	void build_effect_spots();
 
-	// ---- 面板の字。窓の大きさと LCD の寸法から 6 つの大きさを作って、
-	// 設定しだいが同じなら作り直さない（ImGui は大きさごとに字を描く）
-	void build_fonts();
-	void drop_fonts();
+	// ---- The panel's own fonts. Six sizes, worked out from the window scale
+	// and the LCD's dimensions; nothing is rebuilt unless one of them moved
+	// (ImGui rasterizes per size).
+	//
+	// **Also called while painting.** On macOS the window settles on its final
+	// size during setFrameSize:, before the ImGui context exists, so a panel
+	// that only ever built them from resize() ended up with none at all -- and
+	// every label then fell back to ImGui's 16 px default, which is about twice
+	// the size the panel means. Painting is the first moment a context is
+	// guaranteed to be there.
+	void build_fonts() const;
+	void drop_fonts() const;
 
 	// ---- LCD
 	// The dimensions inside the LCD window. d is the dot pitch, x0/y0 the top
@@ -252,9 +268,9 @@ private:
 	u64 m_ram_serial = 0;
 
 	// ---- 字
-	im::fonts m_fonts;
-	int m_font_px[6] = {};        // label small tiny key tag num。0 ならまだ無い
-	ImGuiContext *m_font_ctx = nullptr;   // the context the six were added to
+	mutable im::fonts m_fonts;
+	mutable int m_font_px[6] = {};        // label small tiny key tag num。0 ならまだ無い
+	mutable ImGuiContext *m_font_ctx = nullptr;   // the context the six were added to
 
 	// キートップの記号（− ＋ ◀ ▶）。縁をぼかした絵。大きさが変わるたびに作る
 	std::shared_ptr<svg_art> m_key_sym[4];
