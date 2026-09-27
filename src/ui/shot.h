@@ -95,9 +95,6 @@ inline int write_shot(const std::string &path, int w, int h, bridge &br,
 	std::vector<u8> bgra(size_t(w) * size_t(h) * 4);
 	bool drew = false;
 
-	// outlives Render(): see shot_detail::rig
-	shot_detail::rig rig;
-
 #ifdef _WIN32
 	// WARP: pixels with no window and no GPU.
 	imshell::dx11_state st{};
@@ -118,6 +115,9 @@ inline int write_shot(const std::string &path, int w, int h, bridge &br,
 		if (SUCCEEDED(st.dev->CreateTexture2D(&td, nullptr, &tex)) &&
 		    SUCCEEDED(st.dev->CreateTexture2D(&sd, nullptr, &stage)) &&
 		    SUCCEEDED(st.dev->CreateRenderTargetView(tex, nullptr, &st.rtv))) {
+			// outlives Render(), which happens inside dx11_paint: see
+			// shot_detail::rig
+			shot_detail::rig rig;
 			imshell::dx11_paint(st, w, h, [&](ImDrawList *dl) {
 				shot_frame(rig, dl, st.fonts, w, h, grid, lcd_only, layout_path, br);
 			});
@@ -150,6 +150,8 @@ inline int write_shot(const std::string &path, int w, int h, bridge &br,
 		SDL_Window *win = SDL_CreateWindow("shot", w, h, SDL_WINDOW_HIDDEN);
 		SDL_Renderer *ren = win ? SDL_CreateRenderer(win, "software") : nullptr;
 		if (ren && imshell::sdl_start(st, win, ren)) {
+			// outlives Render(), which happens inside sdl_present
+			shot_detail::rig rig;
 			imshell::sdl_begin(st);
 			shot_frame(rig, ImGui::GetBackgroundDrawList(), st.fonts, w, h,
 			           grid, lcd_only, layout_path, br);
