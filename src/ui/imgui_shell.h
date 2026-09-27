@@ -64,16 +64,7 @@ namespace imshell {
 inline im::fonts panel_fonts()
 {
 	im::fonts f{};
-	size_t bytes = 0;
-	if (const void *data = cjk_font_data(bytes)) {
-		ImFontConfig cfg;
-		cfg.FontDataOwnedByAtlas = false;      // ours, and it outlives the atlas
-		if (ImFont *font = ImGui::GetIO().Fonts->AddFontFromMemoryTTF(
-		        const_cast<void *>(data), int(bytes), 16.0f, &cfg))
-			f.label = f.small = f.tiny = font;
-	}
-	if (!f.label)
-		ImGui::GetIO().Fonts->AddFontDefault();   // the atlas needs a font
+	f.label = f.small = f.tiny = add_cjk_font(ImGui::GetIO().Fonts);
 	return f;
 }
 

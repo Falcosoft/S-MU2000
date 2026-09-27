@@ -13,6 +13,8 @@
 
 #pragma once
 
+#include "imgui.h"   // add_cjk_font() hands back an ImFont*
+
 #include <cstdio>
 #include <string>
 #include <vector>
@@ -135,6 +137,30 @@ inline const void *cjk_font_data(size_t &bytes)
 	}
 	bytes = data.size();
 	return data.empty() ? nullptr : data.data();
+}
+
+// Put one CJK face into an atlas at a given size, and return the font ImGui
+// will draw with -- or ImGui's built-in, if this machine has no Japanese font
+// to be found. The buffer stays ours (FontDataOwnedByAtlas = false) because it
+// outlives every atlas in the process, which the lazy bakes need.
+//
+// **One font setup for the whole program.** The panel (build_fonts), the
+// window's own pieces (imshell::panel_fonts) and the five PC editor windows all
+// come through here. The editor windows each used to carry their own table of
+// font names, and having three copies of that list is how the Linux one came to
+// be the only window in the light ImGui style: three copies drift, and nothing
+// says they should not.
+inline ImFont *add_cjk_font(ImFontAtlas *atlas, float px = 16.0f)
+{
+	size_t bytes = 0;
+	if (const void *data = cjk_font_data(bytes)) {
+		ImFontConfig cfg;
+		cfg.FontDataOwnedByAtlas = false;
+		if (ImFont *font = atlas->AddFontFromMemoryTTF(
+		        const_cast<void *>(data), int(bytes), px, &cfg))
+			return font;
+	}
+	return atlas->AddFontDefault();
 }
 
 #endif // S_MU2000_UI_FONT_FILE_H
