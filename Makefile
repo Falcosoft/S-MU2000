@@ -854,7 +854,16 @@ $(BUILD)/clapobj/%.o: %.cpp
 	@mkdir -p $(dir $@)
 	$(CXX) $(CXXFLAGS) $(CLAP_INC) $(IMGUI_FLAGS) -c -o $@ $<
 
-clap: $(CLAP_BIN)
+# フォト調のパネルの絵（art/real）も CLAP の束の中へ。macOS の CLAP は VST3 や
+# AU と同じ束（Contents/MacOS にバイナリ）なので、同じ居場所から見つかる。
+# 定義は clap: より前に置く。:= は読んだ時点で展開される
+CLAP_PANEL := $(CLAP_DIR)/Contents/Resources/panel/panel.txt
+
+clap: $(CLAP_BIN) $(CLAP_PANEL)
+
+$(CLAP_PANEL): $(wildcard art/real/*.png) art/real/panel.txt
+	@mkdir -p $(dir $@)
+	@cp -f art/real/*.png art/real/panel.txt $(dir $@)
 
 $(CLAP_BIN): $(OBJS) $(BUILD)/src/mu2000.o $(CLAP_OBJS) $(MAC_PC_OBJS)
 	@mkdir -p $(dir $@)
@@ -867,7 +876,7 @@ $(CLAP_BIN): $(OBJS) $(BUILD)/src/mu2000.o $(CLAP_OBJS) $(MAC_PC_OBJS)
 
 CLAP_INSTALL ?= $(HOME)/Library/Audio/Plug-Ins/CLAP
 
-install-clap: $(CLAP_BIN)
+install-clap: $(CLAP_BIN) $(CLAP_PANEL)
 	rm -rf "$(CLAP_INSTALL)/S-MU2000.clap"
 	mkdir -p "$(CLAP_INSTALL)"
 	cp -r $(CLAP_DIR) "$(CLAP_INSTALL)/"
@@ -931,7 +940,16 @@ AU_SRCS := src/au/plugin.cpp src/au/editor_mac.mm src/vst3/engine.cpp src/vst3/i
 AU_OBJS := $(AU_SRCS:%.cpp=$(BUILD)/vst3obj/%.o)
 AU_OBJS := $(AU_OBJS:%.mm=$(BUILD)/vst3obj/%.o)
 
-au: $(AU_BIN)
+# 写真調のパネルの絵（art/real）も AU の中へ。VST3 と同じ居場所、同じ理由
+# （doc/panel-editing.md）。これがないと find_default() が
+# layout.cpp の内蔵の配置（"YAMAHA" の古い絵）に落ちて、素の GDI 風の
+# パネルになる。プラグインの型式は違っても、中身は同じ一枚であるべき。
+AU_PANEL := $(AU_DIR)/Contents/Resources/panel/panel.txt
+
+au: $(AU_BIN) $(AU_PANEL)
+$(AU_PANEL): $(wildcard art/real/*.png) art/real/panel.txt
+	@mkdir -p $(dir $@)
+	@cp -f art/real/*.png art/real/panel.txt $(dir $@)
 
 # -bundle like the VST3: an AU is also read with CFBundle
 $(AU_BIN): $(OBJS) $(BUILD)/src/mu2000.o $(AU_OBJS) $(MAC_PC_OBJS)
@@ -947,7 +965,7 @@ $(AU_BIN): $(OBJS) $(BUILD)/src/mu2000.o $(AU_OBJS) $(MAC_PC_OBJS)
 # Where the AU goes. auval looks here
 AU_INSTALL ?= $(HOME)/Library/Audio/Plug-Ins/Components
 
-install-au: $(AU_BIN)
+install-au: $(AU_BIN) $(AU_PANEL)
 	rm -rf "$(AU_INSTALL)/S-MU2000.component"
 	mkdir -p "$(AU_INSTALL)"
 	cp -r $(AU_DIR) "$(AU_INSTALL)/"
@@ -1036,7 +1054,15 @@ $(BUILD)/auv3obj/%.o: %.mm
 # when binaries rebuild would ignore a later-added AUV3_ROMS.
 # An explicitly empty AUV3_ROMS leaves the contents as they are (so a bare
 # rebuild never wipes baked ROMs). Write AUV3_ROMS=none to take them out
-auv3: $(AUV3_HOST) $(BUILD)/autest$(EXE)
+# 写真調のパネルの絵（art/real）も appex の中へ。VST3 / AUv2 と同じ居場所、
+# 同じ理由（doc/panel-editing.md）：無いと find_default() が layout.cpp の
+# 内蔵の配置に落ちて、.panel の絵が入れ替わった版と別の古い絵になる
+AUV3_PANEL := $(AUV3_APPEX)/Contents/Resources/panel/panel.txt
+
+auv3: $(AUV3_HOST) $(BUILD)/autest$(EXE) $(AUV3_PANEL)
+$(AUV3_PANEL): $(wildcard art/real/*.png) art/real/panel.txt
+	@mkdir -p $(dir $@)
+	@cp -f art/real/*.png art/real/panel.txt $(dir $@)
 	# ROMs into the bundle. Before signing (adding them later breaks the seal).
 	# An explicitly empty AUV3_ROMS leaves a bare install alone.
 	# AUV3_ROMS=none takes them out
