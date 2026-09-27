@@ -59,7 +59,6 @@ enum : int {
 	CTL_VAR_TYPE  = 504, CTL_VAR_CONN = 505, CTL_VAR_PART = 506,
 	CTL_INS1_TYPE = 507, CTL_INS1_PART = 508,
 	CTL_INS2_TYPE = 509, CTL_INS2_PART = 510,
-	CTL_FX_FIRST  = 500, CTL_FX_COUNT = 11,
 };
 
 // 触れる場所
@@ -93,7 +92,6 @@ public:
 	// build_fonts() does nothing unless a size actually moved.
 	void fonts_ready();
 
-	page current_page() const { return m_page; }
 
 	// 音量つまみの見え方。音源側の値をそのまま渡してもらう
 	void set_volume(double v) { m_volume_now = v; }
@@ -146,13 +144,6 @@ public:
 	void paint_effects(ImDrawList *dl, const char *status) const;
 	// LCD だけを出すモード（--lcd-only）。それ以外は面のどれか
 	void paint(ImDrawList *dl, const snapshot &s, u64 pressed, const char *status) const;
-
-	// The panel's own lettering, at the six sizes resize() works out. The
-	// window's button strip and the popups use the fixed 16 px set instead
-	// (imgui_shell.h), so those are not routed through here
-	const im::fonts &fonts() const { return m_fonts; }
-
-	const std::vector<spot> &spots() const { return m_spots; }
 
 	// パラメータの層の写し。PC エディタも同じものを読み書きする（tick が回している）
 	xg::model &xg() { return m_xg; }

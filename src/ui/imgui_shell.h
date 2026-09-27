@@ -22,7 +22,6 @@
 #include "imgui.h"
 
 #include <functional>
-#include <string>
 
 #if defined(_WIN32)
 #ifndef NOMINMAX

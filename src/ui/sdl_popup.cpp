@@ -5,7 +5,6 @@
 #include "ui/imgui_shell_sdl.h"
 
 #include <algorithm>
-#include <cstring>
 #include <memory>
 #include <mutex>
 

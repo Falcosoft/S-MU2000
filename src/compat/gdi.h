@@ -32,14 +32,11 @@
 // ---- Base types
 
 using BYTE  = uint8_t;
-using WORD  = uint16_t;
 using DWORD = uint32_t;
 using UINT  = uint32_t;
-using INT   = int32_t;
 // bool, agreeing with objc/objc.h's BOOL, so this header can share a
 // translation unit with Cocoa.
 using BOOL  = bool;
-using UINT_PTR = uintptr_t;
 
 // LONG is `long`, as it is in the Windows headers, rather than a fixed
 // 32-bit type. The drawing code writes things like std::max(1L, ...) with
@@ -68,14 +65,12 @@ inline constexpr BYTE GetBValue(COLORREF c) { return BYTE((c >> 16) & 0xff); }
 
 struct RECT  { LONG left, top, right, bottom; };
 struct POINT { LONG x, y; };
-struct SIZE  { LONG cx, cy; };
 
 // Text placement, as layout.txt names it. Note that DT_LEFT and DT_TOP are
 // 0: being left- or top-aligned is the default, so you cannot test for it,
 // only for the others.
 enum { DT_TOP = 0x0000, DT_LEFT = 0x0000, DT_CENTER = 0x0001, DT_RIGHT = 0x0002,
-       DT_VCENTER = 0x0004, DT_BOTTOM = 0x0008, DT_WORDBREAK = 0x0010,
-       DT_SINGLELINE = 0x0020, DT_NOCLIP = 0x0100, DT_END_ELLIPSIS = 0x8000 };
+       DT_VCENTER = 0x0004, DT_WORDBREAK = 0x0010, DT_SINGLELINE = 0x0020 };
 
 #endif // _WIN32
 

@@ -36,19 +36,15 @@ namespace ui {
 
 inline constexpr COLORREF BODY      = RGB(28, 30, 34);
 inline constexpr COLORREF BODY_TOP  = RGB(44, 47, 53);
-inline constexpr COLORREF BEZEL     = RGB(12, 12, 12);
 inline constexpr COLORREF LCD_BACK  = RGB(150, 205, 45);
 inline constexpr COLORREF LCD_GHOST = RGB(140, 194, 44);   // 消えている点。実物もうっすら見える
 inline constexpr COLORREF LCD_DOT   = RGB(18, 22, 14);
-inline constexpr COLORREF LED_OFF   = RGB(20, 28, 10);
 inline constexpr COLORREF LED_ON    = RGB(178, 255, 51);
 inline constexpr COLORREF BTN_FACE  = RGB(58, 62, 68);
 inline constexpr COLORREF BTN_EDGE  = RGB(92, 97, 104);
 inline constexpr COLORREF BTN_DOWN  = RGB(126, 170, 70);
 inline constexpr COLORREF TEXT      = RGB(226, 229, 233);
 inline constexpr COLORREF TEXT_DIM  = RGB(150, 155, 162);
-inline constexpr COLORREF WHEEL     = RGB(46, 49, 54);
-inline constexpr COLORREF WHEEL_EDGE= RGB(96, 101, 108);
 inline constexpr COLORREF ACCENT    = RGB(126, 200, 90);
 
 namespace im {
@@ -139,36 +135,11 @@ inline void line(ImDrawList *dl, int x1, int y1, int x2, int y2, COLORREF c,
 
 // 凸多角形の塗りと輪郭
 inline void poly(ImDrawList *dl, const ImVec2 *pts, int n, COLORREF fill_c,
-                 COLORREF edge_c, float pen = 1.0f, bool closed = true)
+                 COLORREF edge_c, float pen = 1.0f)
 {
 	dl->AddConvexPolyFilled(const_cast<ImVec2 *>(pts), n, col(fill_c));
-	if (closed)
-		dl->AddPolyline(const_cast<ImVec2 *>(pts), n, col(edge_c),
-		                ImDrawFlags_Closed, pen);
-	else
-		dl->AddPolyline(const_cast<ImVec2 *>(pts), n, col(edge_c), 0, pen);
-}
-
-// 目盛りの弧 (panel.cpp の Arc)。a0/a1 はラジアン
-inline void arc(ImDrawList *dl, ImVec2 center, float rx, float ry, float a0,
-                float a1, COLORREF c, float width)
-{
-	// ImGui arcs are circular; the panel dials use axis-aligned ellipses,
-	// so sample the ellipse into a polyline (segments look identical).
-	const int segs = 48;
-	dl->PathClear();
-	for (int i = 0; i <= segs; i++) {
-		const float a = a0 + (a1 - a0) * float(i) / float(segs);
-		dl->PathLineTo(ImVec2(center.x + rx * cosf(a), center.y + ry * cosf(a) * 0 + ry * sinf(a)));
-	}
-	dl->PathStroke(col(c), 0, width);
-}
-
-inline void ellipse(ImDrawList *dl, ImVec2 center, float rx, float ry,
-                    COLORREF c, float width)
-{
-	// Same elliptical sampling as arc(), full turn.
-	arc(dl, center, rx, ry, 0.0f, 2.0f * 3.14159265f, c, width);
+	dl->AddPolyline(const_cast<ImVec2 *>(pts), n, col(edge_c),
+	                ImDrawFlags_Closed, pen);
 }
 
 // 字は UTF-8 のまま渡す (ImGui wants UTF-8)。font + px は label/small/tiny

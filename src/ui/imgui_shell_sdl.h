@@ -16,7 +16,6 @@
 #include "backends/imgui_impl_sdlrenderer3.h"
 #include <SDL3/SDL.h>
 
-#include <functional>
 
 namespace ui {
 namespace imshell {

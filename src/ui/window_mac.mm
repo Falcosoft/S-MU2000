@@ -10,7 +10,6 @@
 #import <Metal/Metal.h>
 #import <QuartzCore/CAMetalLayer.h>
 #import <UniformTypeIdentifiers/UniformTypeIdentifiers.h>
-#import <CoreText/CoreText.h>
 
 #include "window_mac.h"
 #include "app.h"

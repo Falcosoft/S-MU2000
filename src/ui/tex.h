@@ -36,7 +36,6 @@
 #include "imgui_internal.h"
 
 #include <cstdint>
-#include <cstring>
 #include <vector>
 
 namespace ui {
@@ -178,8 +177,6 @@ public:
 	}
 
 	bool valid() const { return m_data != nullptr; }
-	int width() const { return m_w; }
-	int height() const { return m_h; }
 
 	// For ImGui::Image / ImDrawList::AddImage
 	ImTextureRef ref() const { return m_data ? m_data->GetTexRef() : ImTextureRef(); }

@@ -5,7 +5,6 @@
 // input semantics all live in view.cpp; this is only the window.
 //
 
-#import <Cocoa/Cocoa.h>
 #import <Metal/Metal.h>
 #import <QuartzCore/CAMetalLayer.h>
 

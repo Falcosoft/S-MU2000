@@ -62,7 +62,6 @@ private:
 	// 1 枚にした絵。テクスチャへ入れるので α は戻してある（0xAARRGGBB）
 	struct cache {
 		int w = 0, h = 0;                // 付けた dst の大きさ。変わったら作り直す
-		std::vector<uint32_t> px;        // straight alpha, ready for the texture
 		void *gpu = nullptr;             // im::tex (ui/tex.h), freed by release_gpu()
 	};
 	bool load_png(const std::string &path);
