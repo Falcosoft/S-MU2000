@@ -45,6 +45,9 @@ public:
 
 private:
 	static void drum_hidden(bridge &br);
+	// 前のコマでドラムのタブを出していたか。出していれば左の面をキットと鍵の一覧にする
+	// （左の面はタブより先に描くので、前のコマの結果を使う）
+	bool m_drum_tab = false;
 	// 上のペインは一覧と同じ部品で描く（棒のドラッグや鍵盤の押さえを覚える入れ物として持つ）
 	overview m_strip;
 };

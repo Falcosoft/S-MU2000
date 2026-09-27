@@ -137,6 +137,7 @@ inline const ui_texts &en_texts()
 		.xgui_no_rom_names = "Cannot read voice names from the ROM, showing GM names.",
 		.xgui_bank_diff_fmt = "Bank variations of %3d",
 		.xgui_no_bank_kit = "Kits have no bank variations.",
+		.xgui_drum_pick_kit = "Choose a kit on the left to list the instrument of each key here",
 		.xgui_no_bank_norom = "Cannot read voices from the ROM, so no bank variations.",
 		.xgui_no_bank = "This voice has no bank variations.",
 		.xgui_other = "Other",

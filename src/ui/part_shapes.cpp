@@ -1397,7 +1397,8 @@ void part_shapes::draw(xg::model &m, const xg_snapshot &ram, bridge &br)
 	// ---- 左に音色を選ぶ面、右はタブ: 「形」は 4 つの区画（2 × 2）、「すべて」はパートのパラメータ全部
 	const ImVec2 avail = ImGui::GetContentRegionAvail();
 	// 音色を選ぶ面は、左に分類・右に音色とバンク違いの 2 列（xgui::program_pane）
-	const float pane_w = std::min(fs * 15.6f, avail.x * 0.3f);     // 前の 6 割
+	// 前の 6 割。ドラムのタブのとき（キットと 12 文字の楽器名）は少し広く
+	const float pane_w = m_drum_tab ? std::min(fs * 18.0f, avail.x * 0.34f) : std::min(fs * 15.6f, avail.x * 0.3f);
 	// 下の説明の帯（小さめの字で 3 行）。「説明を出す」を切っていれば帯ごと出さず、その高さを絵に回す
 	const bool show_bar = help_on();
 	ImGui::PushFont(nullptr, fs * BAR_SCALE);
@@ -1412,7 +1413,11 @@ void part_shapes::draw(xg::model &m, const xg_snapshot &ram, bridge &br)
 		if (ImGui::BeginChild("voicepane", ImVec2(pane_w, body_h)))
 		{
 			ImGui::PushFont(nullptr, fs * 0.85f);   // 分類・音色・バンク違いの 3 つは小さめの字で
-			program_pane(part, m, &ram, br);
+			// ドラムのタブのときは、左にキット・右にいまのキットの鍵ごとの楽器名
+			if (m_drum_tab)
+				drum_pane(part, m, br);
+			else
+				program_pane(part, m, &ram, br);
 			ImGui::PopFont();
 		}
 		ImGui::EndChild();
@@ -1453,6 +1458,8 @@ void part_shapes::draw(xg::model &m, const xg_snapshot &ram, bridge &br)
 
 	ImGui::BeginGroup();
 	const float top_y = ImGui::GetCursorScreenPos().y;
+	const bool was_drum = m_drum_tab;
+	m_drum_tab = false;
 	if (ImGui::BeginTabBar("right")) {
 		if (ImGui::BeginTabItem(UI_TEXT(ps_tab_shape, "Shape"))) {
 			scope = part;
@@ -1537,6 +1544,7 @@ void part_shapes::draw(xg::model &m, const xg_snapshot &ram, bridge &br)
 		const ImGuiTabItemFlags drum_flags = take_drum_tab() ? ImGuiTabItemFlags_SetSelected : 0;
 		if (ImGui::BeginTabItem(UI_TEXT(ps_tab_drum, "Drum"), nullptr, drum_flags)) {
 			scope = part;
+			m_drum_tab = true;
 			drum_tab(part, m, ram, br, body_h - (ImGui::GetCursorScreenPos().y - top_y));
 			ImGui::EndTabItem();
 		}
@@ -1579,6 +1587,8 @@ void part_shapes::draw(xg::model &m, const xg_snapshot &ram, bridge &br)
 			ImGui::EndTabItem();
 		}
 		ImGui::EndTabBar();
+	} else {
+		m_drum_tab = was_drum;
 	}
 	ImGui::EndGroup();
 

@@ -168,6 +168,7 @@ struct ui_texts {
 	const char *xgui_no_rom_names;
 	const char *xgui_bank_diff_fmt;  // %d
 	const char *xgui_no_bank_kit;
+	const char *xgui_drum_pick_kit;
 	const char *xgui_no_bank_norom;
 	const char *xgui_no_bank;
 	const char *xgui_other;

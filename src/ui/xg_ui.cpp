@@ -751,6 +751,21 @@ void audition_start(int part, int msb, xg::model &m, bridge &br)
 	a.off_at = a.on_at + 1.0;
 }
 
+// 鍵を 1 つ指定して鳴らす（ドラムのタブの左の面）。印の付いた鍵とは別
+void audition_note(int part, int key, xg::model &m, bridge &br)
+{
+	audition_off(br);
+	int rcv = 127;
+	if (!m.get(P("part.rcv_channel"), part, rcv) || rcv < 0 || rcv > 63)
+		return;
+	audition &a = g_audition;
+	a.slot = rcv;
+	a.notes.assign(1, key);
+	const double t = now_seconds();
+	a.on_at = t + 0.06;
+	a.off_at = a.on_at + 1.0;
+}
+
 void audition_tick(bridge &br)
 {
 	audition &a = g_audition;
@@ -1069,6 +1084,75 @@ void program_pane(int part, xg::model &m, const xg_snapshot *ram, bridge &br)
 }
 
 
+
+void drum_pane(int part, xg::model &m, bridge &br)
+{
+	int msb = 0, lsb = 0, prog = 0;
+	const bool known = m.get(P("part.bank_msb"), part, msb) && m.get(P("part.bank_lsb"), part, lsb) &&
+	                   m.get(P("part.program"), part, prog);
+	msb = shown_bank_msb(part, m, msb);          // GS のドラム（issue #52）
+	const bool kit = known && (msb == 127 || msb == 126);
+	const xg::voice_rom *vr = voices();
+	const int key = shape_drum_key();
+
+	audition_tick(br);
+
+	const ImVec2 avail = ImGui::GetContentRegionAvail();
+	const float fs = ImGui::GetFontSize();
+
+	// ---- 左: キット。ドラムキット（バンク 127）の下に効果音キット（バンク 126）
+	const float kit_w = std::min(fs * 8.5f, avail.x * 0.45f);
+	if (ImGui::BeginChild("kits", ImVec2(kit_w, 0), ImGuiChildFlags_Borders)) {
+		for (int kmsb : { 127, 126 }) {
+			ImGui::SeparatorText(kmsb == 127 ? UI_TEXT(xgui_kit_drum, "Drum kit") : UI_TEXT(xgui_kit_sfx, "SFX kit"));
+			for (int i = 0; i < 128; i++) {
+				const std::string name = vr ? vr->kit_name(kmsb, i) : std::string();
+				if (name.empty())
+					continue;
+				char label[48];
+				std::snprintf(label, sizeof(label), "%3d %s##k%d_%d", i + 1, name.c_str(), kmsb, i);
+				const bool here = kit && msb == kmsb && prog == i;
+				if (ImGui::Selectable(label, here) && !here) {
+					select_voice(part, kmsb, 0, i, m, br);
+					audition_note(part, key, m, br);
+				}
+				if (here && ImGui::IsWindowAppearing())
+					ImGui::SetScrollHereY();
+			}
+		}
+	}
+	ImGui::EndChild();
+	ImGui::SameLine();
+
+	// ---- 右: いまのキットの鍵ごとの楽器名。音の無い鍵は薄く番号だけ
+	if (ImGui::BeginChild("keys", ImVec2(0, 0), ImGuiChildFlags_Borders)) {
+		if (!kit || !vr) {
+			ImGui::TextWrapped("%s", UI_TEXT(xgui_drum_pick_kit, "Choose a kit on the left to list the instrument of each key here"));
+		} else {
+			// ドラムのタブで鍵が替わったら、その行まで送る
+			static int shown_key = -1;
+			const bool follow = key != shown_key || ImGui::IsWindowAppearing();
+			shown_key = key;
+			for (int k = XG_DRUM_KEY0; k < XG_DRUM_KEY0 + XG_DRUM_KEYS; k++) {
+				const std::string name = vr->drum_key_name(msb, prog, k);
+				char label[48];
+				std::snprintf(label, sizeof(label), "%-3d %s##n%d", k, name.c_str(), k);
+				if (name.empty())
+					ImGui::PushStyleColor(ImGuiCol_Text, ImGui::GetColorU32(ImGuiCol_TextDisabled));
+				if (ImGui::Selectable(label, k == key)) {
+					set_shape_drum_key(k);
+					shown_key = k;
+					audition_note(part, k, m, br);
+				}
+				if (name.empty())
+					ImGui::PopStyleColor();
+				if (k == key && follow)
+					ImGui::SetScrollHereY();
+			}
+		}
+	}
+	ImGui::EndChild();
+}
 
 // ---- 説明（ヘルプ）と言語
 //

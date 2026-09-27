@@ -208,6 +208,10 @@ void set_master_zoom(float zoom);
 // 今見ているのと違う分類を押すと、その分類の先頭の音色（キットなら先頭のキット）に替える。
 // 音色を替えたら、そのパートで 1 秒だけ音を鳴らして聴かせる
 void program_pane(int part, xg::model &m, const xg_snapshot *ram, bridge &br);
+// 音色の窓のドラムのタブのときの左の面。左の列にキット（ドラムキットと効果音キット）、
+// 右の列にいまのキットの鍵ごとの楽器名。キットを押すとパートの音色を替え、鍵を押すと
+// ドラムのタブの鍵（shape_drum_key）をその鍵にする。どちらも今の鍵を 1 回鳴らす
+void drum_pane(int part, xg::model &m, bridge &br);
 
 // 「ピッチベンド」の組の下に出す、いまのベンドの値。**ワーク RAM ではなく
 // 入ってきた MIDI から**取る（式だけの口では firmware にベンドを渡さないので、

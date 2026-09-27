@@ -137,6 +137,7 @@ inline const ui_texts &ja_texts()
 		.xgui_no_rom_names = "ROM から音色の名前を読めないので、GM の名前で出している",
 		.xgui_bank_diff_fmt = "%3d のバンク違い",
 		.xgui_no_bank_kit = "キットにはバンク違いが無い",
+		.xgui_drum_pick_kit = "キットを選ぶと、ここに鍵ごとの楽器名が並ぶ",
 		.xgui_no_bank_norom = "ROM から音色を読めないので、バンク違いを出せない",
 		.xgui_no_bank = "この音色にはバンク違いが無い",
 		.xgui_other = "その他",
