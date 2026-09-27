@@ -711,7 +711,7 @@ MAC_GUI_SRCS := src/ui/panel.cpp src/ui/editor.cpp src/ui/effects.cpp \
                 src/ui/audio_out_mac.cpp src/ui/audio_in_mac.cpp \
                 src/ui/midi_in_mac.cpp src/ui/midi_out_mac.cpp \
                 src/xg/model.cpp \
-                src/ui/window_mac.mm src/ui/app_mac.cpp \
+                src/ui/window_mac.mm src/ui/app_mac.cpp src/ui/shot_mac.mm \
                 src/gui_mac.cpp
 
 # PC editor (doc/pc-editor.md). The views are the same files as on Windows;
@@ -753,26 +753,19 @@ $(BUILD)/src/ui/%.o: src/ui/%.cpp
 	@mkdir -p $(dir $@)
 	$(CXX) $(CXXFLAGS) $(IMGUI_FLAGS) -c -o $@ $<
 
-# --shot renders headless through the SDL3 software renderer on every
-# platform with SDL (Linux, macOS). The Dear ImGui SDL backends below are
-# vendored unmodified, like the rest.
-MAC_SDL_CFLAGS := $(shell pkg-config --cflags sdl3 2>/dev/null)
-MAC_SDL_LIBS := $(shell pkg-config --libs sdl3 2>/dev/null)
-MAC_IMGUI_SDL_SRCS := $(IMGUI_DIR)/backends/imgui_impl_sdl3.cpp \
-                      $(IMGUI_DIR)/backends/imgui_impl_sdlrenderer3.cpp
-MAC_IMGUI_SDL_OBJS := $(MAC_IMGUI_SDL_SRCS:%.cpp=$(BUILD)/imgui/%.o)
-
-$(BUILD)/src/ui/app_mac.o: CXXFLAGS += $(IMGUI_FLAGS) $(MAC_SDL_CFLAGS)
-$(BUILD)/src/ui/window_mac.o: CXXFLAGS += $(IMGUI_FLAGS) $(MAC_SDL_CFLAGS)
-$(BUILD)/src/gui_mac.o: CXXFLAGS += $(IMGUI_FLAGS) $(MAC_SDL_CFLAGS)
-$(BUILD)/src/ui/%.o: CXXFLAGS += $(MAC_SDL_CFLAGS)
-$(BUILD)/imgui/%.o: CXXFLAGS += $(MAC_SDL_CFLAGS)
+# --shot renders headless through Metal on macOS (ui/shot_mac.mm): the same
+# renderer the window uses, into an ordinary texture, because a CAMetalLayer
+# drawable is framebufferOnly and wants presenting. SDL3 stays a Linux-only
+# dependency; asking macOS for it is what broke the macOS CI build, whose
+# runner has no SDL3. shot_mac.mm is Objective-C++, so it needs the ImGui
+# include path spelled out like the other .mm files above it.
+$(BUILD)/src/ui/shot_mac.o: CXXFLAGS += $(IMGUI_FLAGS)
 
 MAC_FRAMEWORKS += -framework Metal
 
-$(BUILD)/gui$(EXE): $(OBJS) $(BUILD)/src/mu2000.o $(BUILD)/src/smf.o $(MAC_GUI_OBJS) $(MAC_PC_OBJS) $(MAC_IMGUI_SDL_OBJS)
+$(BUILD)/gui$(EXE): $(OBJS) $(BUILD)/src/mu2000.o $(BUILD)/src/smf.o $(MAC_GUI_OBJS) $(MAC_PC_OBJS)
 	@mkdir -p $(dir $@)
-	$(CXX) $(CXXFLAGS) -o $@ $^ $(LDFLAGS) $(MAC_FRAMEWORKS) $(MAC_SDL_LIBS)
+	$(CXX) $(CXXFLAGS) -o $@ $^ $(LDFLAGS) $(MAC_FRAMEWORKS)
 
 # ---- VST3 plug-in (macOS)
 #
@@ -1033,7 +1026,7 @@ AUV3_FW    := -framework Foundation -framework AudioToolbox -framework AVFoundat
 
 $(BUILD)/auv3obj/%.o: %.cpp
 	@mkdir -p $(dir $@)
-	$(CXX) $(CXXFLAGS) $(VST3_INC) -c -o $@ $<
+	$(CXX) $(CXXFLAGS) $(VST3_INC) $(IMGUI_FLAGS) -c -o $@ $<
 
 $(BUILD)/auv3obj/%.o: %.mm
 	@mkdir -p $(dir $@)

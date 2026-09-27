@@ -26,30 +26,51 @@
 
 #ifdef _WIN32
 #include <d3d11.h>
-#else
+#elif !defined(__APPLE__)
 #include "ui/imgui_shell_sdl.h"
 #include <SDL3/SDL.h>
 #endif
 
 namespace ui {
 
+#ifdef __APPLE__
+// The macOS picture is Metal, and it lives in shot_mac.mm. This header is also
+// read by plain C++ translation units (gui_mac.cpp runs --shot, and app.h pulls
+// this in), which cannot hold an Objective-C renderer at all; and macOS must
+// not need SDL3, which is a Linux-only dependency it has no business having.
+// The declaration takes plain types for the same reason.
+int write_shot_metal(int w, int h, std::vector<u8> &rgba, bool grid, bool lcd_only,
+                     const std::string &layout_path, bridge &br);
+#endif
+
 namespace shot_detail {
 
+// The panel and the button bar, held by the caller rather than made here.
+// The draw commands point at the panel's picture textures, so both have to
+// still be alive when ImGui::Render() reads them -- a panel that goes out of
+// scope before Render takes its textures with it, and Render is what uploads
+// them. The old code built the panel inside shot_frame() and so destroyed it
+// one line too early; it happened not to crash (the freed ImTextureData still
+// held a usable TexID), which is not a thing to rely on.
+struct rig {
+	panel   p;
+	toolbar bar;
+};
+
 // The empty machine's front page into the current frame's draw list.
-inline void shot_frame(ImDrawList *dl, const im::fonts &f, int w, int h,
+inline void shot_frame(rig &r, ImDrawList *dl, const im::fonts &f, int w, int h,
                        bool grid, bool lcd_only, const std::string &layout_path,
                        bridge &br)
 {
-	panel p;
+	panel &p = r.p;
 	std::string lerr;
 	if (!layout_path.empty() && !p.lay().load(layout_path, lerr))
 		std::fprintf(stderr, "配置: %s を開けない\n", layout_path.c_str());
 	if (!lerr.empty())
 		std::fprintf(stderr, "%s", lerr.c_str());
 	p.set_lcd_only(lcd_only);
-	toolbar bar;
 	if (!lcd_only) {
-		bar.set_items(window_bar_items());
+		r.bar.set_items(window_bar_items());
 		p.set_top_inset(toolbar::HEIGHT);
 	}
 	p.resize(w, h);
@@ -59,7 +80,7 @@ inline void shot_frame(ImDrawList *dl, const im::fonts &f, int w, int h,
 	p.set_volume(0.8);
 	p.paint(dl, s, 0, "");
 	if (!lcd_only)
-		bar.paint(dl, w, f.label, f.label_px);
+		r.bar.paint(dl, w, f.label, f.label_px);
 }
 
 } // namespace shot_detail
@@ -73,6 +94,9 @@ inline int write_shot(const std::string &path, int w, int h, bridge &br,
 
 	std::vector<u8> bgra(size_t(w) * size_t(h) * 4);
 	bool drew = false;
+
+	// outlives Render(): see shot_detail::rig
+	shot_detail::rig rig;
 
 #ifdef _WIN32
 	// WARP: pixels with no window and no GPU.
@@ -95,7 +119,7 @@ inline int write_shot(const std::string &path, int w, int h, bridge &br,
 		    SUCCEEDED(st.dev->CreateTexture2D(&sd, nullptr, &stage)) &&
 		    SUCCEEDED(st.dev->CreateRenderTargetView(tex, nullptr, &st.rtv))) {
 			imshell::dx11_paint(st, w, h, [&](ImDrawList *dl) {
-				shot_frame(dl, st.fonts, w, h, grid, lcd_only, layout_path, br);
+				shot_frame(rig, dl, st.fonts, w, h, grid, lcd_only, layout_path, br);
 			});
 			st.ctx->CopyResource(stage, tex);
 			D3D11_MAPPED_SUBRESOURCE map{};
@@ -118,6 +142,8 @@ inline int write_shot(const std::string &path, int w, int h, bridge &br,
 		if (tex) tex->Release();
 		imshell::dx11_stop(st);
 	}
+#elif defined(__APPLE__)
+	drew = write_shot_metal(w, h, bgra, grid, lcd_only, layout_path, br) != 0;
 #else
 	imshell::sdl_state st{};
 	if (SDL_Init(SDL_INIT_VIDEO)) {
@@ -125,7 +151,7 @@ inline int write_shot(const std::string &path, int w, int h, bridge &br,
 		SDL_Renderer *ren = win ? SDL_CreateRenderer(win, "software") : nullptr;
 		if (ren && imshell::sdl_start(st, win, ren)) {
 			imshell::sdl_begin(st);
-			shot_frame(ImGui::GetBackgroundDrawList(), st.fonts, w, h,
+			shot_frame(rig, ImGui::GetBackgroundDrawList(), st.fonts, w, h,
 			           grid, lcd_only, layout_path, br);
 			imshell::sdl_present(ren);
 			if (SDL_Surface *got = SDL_RenderReadPixels(ren, nullptr)) {
