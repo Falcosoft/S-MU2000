@@ -4,6 +4,8 @@
 
 A software tone generator modeled on the Yamaha MU2000, designed to be played as a plug-in inside a DAW.
 
+![Screenshot](doc/mu_screenshot.png)
+
 **Current state: runs as VST3 / CLAP (Windows) and VST3 / Audio Unit (macOS), with a hardware-style front-panel screen plus a mouse-and-keyboard editor.**
 
 This project is developed in the open, work-in-progress and all. On X, follow `#S_MU2000`.
