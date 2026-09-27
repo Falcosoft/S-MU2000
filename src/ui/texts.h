@@ -201,6 +201,12 @@ struct ui_texts {
 	const char *ed_col_vol;
 	const char *ed_tab_mixer;
 	const char *ed_tab_part;
+	const char *ed_tab_drum;
+	const char *drum_used_by;
+	const char *drum_none;
+	const char *drum_reset;
+	const char *drum_names_hint;
+	const char *drum_plain_note;
 	const char *ed_knobs_on;
 	const char *ed_knobs_off;
 	// Part voice window (part_shapes.cpp).

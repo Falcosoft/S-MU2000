@@ -1,6 +1,7 @@
 // license:BSD-3-Clause
 
 #include "pc_editor.h"
+#include "eq_curve.h"
 #include "ui/texts.h"
 #include "xg_ui.h"
 
@@ -10,6 +11,8 @@
 #include <algorithm>
 #include <cmath>
 #include <cstdio>
+#include <cstdlib>
+#include <cstring>
 #include <string>
 
 namespace ui {
@@ -32,6 +35,75 @@ std::string shown(const xg::param &p, int v)
 using group = part_group;
 
 ImU32 col(ImGuiCol c, float alpha = 1.0f) { return ImGui::GetColorU32(c, alpha); }
+
+// ---- ドラムセットアップ（XG の 3n rr pp）
+// RAM の 23 個と XG の番地の対応は、firmware に 1 つずつ書かせて割り出した
+// （xgtest --drumprobe。0-15 が 00-0F、あと 20・21・24・25・50・60・61）
+enum class dshow { signed64, plain, alt, pan, assign, toggle, eq_gain, freq, vel };
+struct dparam { u8 addr; const char *head; int lo, hi; dshow show; };
+constexpr dparam DRUM_PARAMS[XG_DRUM_PARAMS] = {
+	{ 0x00, "Pitch",  0, 127, dshow::signed64 }, { 0x01, "Fine",   0, 127, dshow::signed64 },
+	{ 0x02, "Level",  0, 127, dshow::plain },    { 0x03, "Alt",    0, 127, dshow::alt },
+	{ 0x04, "Pan",    0, 127, dshow::pan },      { 0x05, "Rev",    0, 127, dshow::plain },
+	{ 0x06, "Cho",    0, 127, dshow::plain },    { 0x07, "Var",    0, 127, dshow::plain },
+	{ 0x08, "Assign", 0, 1,   dshow::assign },   { 0x09, "RcvOff", 0, 1,   dshow::toggle },
+	{ 0x0a, "RcvOn",  0, 1,   dshow::toggle },   { 0x0b, "Cutoff", 0, 127, dshow::signed64 },
+	{ 0x0c, "Reso",   0, 127, dshow::signed64 }, { 0x0d, "Atk",    0, 127, dshow::signed64 },
+	{ 0x0e, "Dcy1",   0, 127, dshow::signed64 }, { 0x0f, "Dcy2",   0, 127, dshow::signed64 },
+	{ 0x20, "EQ Lo",  0x34, 0x4c, dshow::eq_gain }, { 0x21, "EQ Hi", 0x34, 0x4c, dshow::eq_gain },
+	{ 0x24, "Lo Hz",  4, 40,  dshow::freq },     { 0x25, "Hi Hz",  28, 58, dshow::freq },
+	{ 0x50, "HPF",    0, 127, dshow::signed64 }, { 0x60, "VelPit", 0x30, 0x50, dshow::vel },
+	{ 0x61, "VelCut", 0x30, 0x50, dshow::vel },
+};
+
+std::string drum_value_text(const dparam &d, int v)
+{
+	char buf[16];
+	switch (d.show) {
+	case dshow::signed64:
+	case dshow::vel:     std::snprintf(buf, sizeof(buf), "%+d", v - 64); break;
+	case dshow::eq_gain: std::snprintf(buf, sizeof(buf), "%+ddB", v - 64); break;
+	case dshow::alt:     if (v) std::snprintf(buf, sizeof(buf), "%d", v); else std::snprintf(buf, sizeof(buf), "Off"); break;
+	case dshow::pan:
+		if (v == 0)       std::snprintf(buf, sizeof(buf), "Rnd");
+		else if (v == 64) std::snprintf(buf, sizeof(buf), "C");
+		else if (v < 64)  std::snprintf(buf, sizeof(buf), "L%d", 64 - v);
+		else              std::snprintf(buf, sizeof(buf), "R%d", v - 64);
+		break;
+	case dshow::assign:  std::snprintf(buf, sizeof(buf), "%s", v ? "Multi" : "Single"); break;
+	case dshow::toggle:  std::snprintf(buf, sizeof(buf), "%s", v ? "On" : "Off"); break;
+	case dshow::freq:    return eq::hz_text(v);
+	default:             std::snprintf(buf, sizeof(buf), "%d", v); break;
+	}
+	return buf;
+}
+
+// 鍵の名前（ヤマハの数え方で 60 = C3）
+std::string key_text(int key)
+{
+	static const char *const N[12] = { "C", "C#", "D", "D#", "E", "F", "F#", "G", "G#", "A", "A#", "B" };
+	char buf[16];
+	std::snprintf(buf, sizeof(buf), "%d %s%d", key, N[key % 12], key / 12 - 2);
+	return buf;
+}
+
+// **GM の打楽器の並び**（鍵 35-81）。キットで実際の音は違うので目安。
+// ROM のドラムの記録から名前を引く道はまだ解けていない（voices.h の drum_record）
+const char *gm_drum_name(int key)
+{
+	static const char *const GM[47] = {
+		"Acoustic Bass Drum", "Bass Drum 1", "Side Stick", "Acoustic Snare", "Hand Clap",
+		"Electric Snare", "Low Floor Tom", "Closed Hi-Hat", "High Floor Tom", "Pedal Hi-Hat",
+		"Low Tom", "Open Hi-Hat", "Low-Mid Tom", "Hi-Mid Tom", "Crash Cymbal 1",
+		"High Tom", "Ride Cymbal 1", "Chinese Cymbal", "Ride Bell", "Tambourine",
+		"Splash Cymbal", "Cowbell", "Crash Cymbal 2", "Vibraslap", "Ride Cymbal 2",
+		"Hi Bongo", "Low Bongo", "Mute Hi Conga", "Open Hi Conga", "Low Conga",
+		"High Timbale", "Low Timbale", "High Agogo", "Low Agogo", "Cabasa",
+		"Maracas", "Short Whistle", "Long Whistle", "Short Guiro", "Long Guiro",
+		"Claves", "Hi Wood Block", "Low Wood Block", "Mute Cuica", "Open Cuica",
+		"Mute Triangle", "Open Triangle" };
+	return key >= 35 && key <= 81 ? GM[key - 35] : "";
+}
 
 } // namespace
 
@@ -363,6 +435,106 @@ void pc_editor::part_page(xg::model &m, bridge &br)
 }
 
 
+// ドラムセットアップの面。上に組（DRUMS1-4）の切り替えと、その組を使っているパート。
+// 表は行が鍵 13-91、列が 1 鍵ぶんの 23 個。値はつまんで上下・ホイールで動かし、
+// 書くのは XG のパラメータチェンジ（F0 43 10 4C 3n rr pp vv F7）
+void pc_editor::drum_page(const xg_snapshot &ram, bridge &br)
+{
+	const float fs = ImGui::GetFontSize();
+	for (int s = 0; s < XG_DRUM_SETS; s++) {
+		char label[16];
+		std::snprintf(label, sizeof(label), "DRUMS%d", s + 1);
+		if (s)
+			ImGui::SameLine();
+		if (ImGui::RadioButton(label, m_drum_set == s))
+			m_drum_set = s;
+	}
+	// その組を使っているパート（パートモード 08 pp 07 が 2-5）
+	std::string users;
+	bool plain = false;
+	for (int p = 0; p < XG_PARTS; p++) {
+		const int mode = ram.parts[p][0x07];
+		if (mode == m_drum_set + 2)
+			users += (users.empty() ? "" : ", ") + part_name(p);
+		if (mode == 1)
+			plain = true;
+	}
+	ImGui::SameLine(0, fs * 1.5f);
+	ImGui::Text("%s %s", UI_TEXT(drum_used_by, "Used by:"),
+	            users.empty() ? UI_TEXT(drum_none, "none") : users.c_str());
+	ImGui::SameLine(0, fs * 1.5f);
+	if (ImGui::SmallButton(UI_TEXT(drum_reset, "Reset this setup"))) {
+		const u8 msg[] = { 0xf0, 0x43, 0x10, 0x4c, 0x00, 0x00, 0x7d, u8(m_drum_set), 0xf7 };
+		br.send(msg, sizeof(msg));
+	}
+	ImGui::TextDisabled("%s", UI_TEXT(drum_names_hint, "Names follow the GM percussion map as a guide; the actual sound depends on the kit"));
+	if (plain) {
+		ImGui::SameLine(0, fs);
+		ImGui::TextDisabled("/ %s", UI_TEXT(drum_plain_note, "Parts in mode DRUM (no number) ignore every drum setup"));
+	}
+
+	const ImGuiTableFlags flags = ImGuiTableFlags_ScrollY | ImGuiTableFlags_ScrollX | ImGuiTableFlags_RowBg |
+	                              ImGuiTableFlags_BordersInnerV | ImGuiTableFlags_SizingFixedFit;
+	if (!ImGui::BeginTable("drum", 2 + XG_DRUM_PARAMS, flags))
+		return;
+	ImGui::TableSetupScrollFreeze(2, 1);
+	ImGui::TableSetupColumn("Key", ImGuiTableColumnFlags_WidthFixed, fs * 4.2f);
+	ImGui::TableSetupColumn("Name", ImGuiTableColumnFlags_WidthFixed, fs * 9.5f);
+	for (const dparam &d : DRUM_PARAMS)
+		ImGui::TableSetupColumn(d.head, ImGuiTableColumnFlags_WidthFixed, fs * 3.6f);
+	ImGui::TableHeadersRow();
+
+	const double now = ImGui::GetTime();
+	ImGuiListClipper clip;
+	clip.Begin(XG_DRUM_KEYS);
+	while (clip.Step()) {
+		for (int r = clip.DisplayStart; r < clip.DisplayEnd; r++) {
+			const int key = XG_DRUM_KEY0 + r;
+			ImGui::TableNextRow();
+			ImGui::PushID(r);
+			ImGui::TableNextColumn();
+			ImGui::TextUnformatted(key_text(key).c_str());
+			ImGui::TableNextColumn();
+			ImGui::TextDisabled("%s", gm_drum_name(key));
+			for (int i = 0; i < XG_DRUM_PARAMS; i++) {
+				const dparam &d = DRUM_PARAMS[i];
+				ImGui::TableNextColumn();
+				int v = ram.drum[m_drum_set][r][i];
+				// 書いたばかりなら、RAM に入るまで（長くて 0.5 秒）その値を出す
+				const drum_edit &e = m_drum_edit;
+				if (e.set == m_drum_set && e.key == key && e.idx == i && now - e.at < 0.5 && v != e.value)
+					v = e.value;
+				v = std::clamp(v, d.lo, d.hi);
+				int nv = v;
+				ImGui::PushID(i);
+				ImGui::SetNextItemWidth(-FLT_MIN);
+				if (d.show == dshow::assign || d.show == dshow::toggle) {
+					bool on = v != 0;
+					if (ImGui::Checkbox(drum_value_text(d, v).c_str(), &on))
+						nv = on ? 1 : 0;
+				} else {
+					// 数の代わりに書式を渡す（% を含まないので、そのまま出る）
+					const std::string text = drum_value_text(d, v);
+					ImGui::DragInt("##v", &nv, 0.25f, d.lo, d.hi, text.c_str(), ImGuiSliderFlags_AlwaysClamp);
+					if (ImGui::IsItemHovered() && ImGui::GetIO().MouseWheel != 0.0f) {
+						nv = std::clamp(nv + (ImGui::GetIO().MouseWheel > 0 ? 1 : -1), d.lo, d.hi);
+						m_wheel_taken = true;
+					}
+				}
+				ImGui::PopID();
+				if (nv != v) {
+					const u8 msg[] = { 0xf0, 0x43, 0x10, 0x4c, u8(0x30 + m_drum_set), u8(key), d.addr, u8(nv & 0x7f), 0xf7 };
+					br.send(msg, sizeof(msg));
+					m_drum_edit = { m_drum_set, key, i, nv, now };
+				}
+			}
+			ImGui::PopID();
+		}
+	}
+	ImGui::EndTable();
+}
+
+
 void pc_editor::draw(xg::model &m, const xg_snapshot &ram, bridge &br)
 {
 	m_ram = &ram;
@@ -410,6 +582,17 @@ void pc_editor::draw(xg::model &m, const xg_snapshot &ram, bridge &br)
 		if (ImGui::BeginTabItem(UI_TEXT(ed_tab_part, "Part"))) {
 			ImGui::Text(UI_TEXT(xgui_part_fmt, "Part %s"), part_name(m_part).c_str());
 			part_page(m, br);
+			ImGui::EndTabItem();
+		}
+		// 確かめ用: SMU2000_EDITOR_TAB=drum で最初からドラムの面を開く（画面を撮るため）
+		static bool open_drum = [] {
+			const char *e = std::getenv("SMU2000_EDITOR_TAB");
+			return e && !std::strcmp(e, "drum");
+		}();
+		const ImGuiTabItemFlags drum_flags = open_drum ? ImGuiTabItemFlags_SetSelected : 0;
+		open_drum = false;
+		if (ImGui::BeginTabItem(UI_TEXT(ed_tab_drum, "Drum"), nullptr, drum_flags)) {
+			drum_page(ram, br);
 			ImGui::EndTabItem();
 		}
 		ImGui::EndTabBar();
