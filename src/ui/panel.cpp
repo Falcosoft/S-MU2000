@@ -22,6 +22,7 @@
 #include "panel.h"
 #include "draw_imgui.h"
 #include "font_file.h"
+#include "tex.h"     // drop_retired_textures
 #include "texts.h"
 
 #include "imgui.h"
@@ -1341,6 +1342,12 @@ void panel::draw_grid(ImDrawList *dl) const
 void panel::paint(ImDrawList *dl, const snapshot &s, u64 pressed,
                   const char *status) const
 {
+	// The panel draws every picture on the panel, so this is the one place all
+	// of them pass through. Hand back the ones a resize replaced: the draw list
+	// is empty here (GetBackgroundDrawList reset it, since this is the first
+	// asking this frame) and the backend has had the whole of last frame to
+	// release their graphics objects (see im::tex::retire).
+	im::drop_retired_textures();
 	if (m_lcd_only) {
 		draw_lcd(dl, s);
 		return;

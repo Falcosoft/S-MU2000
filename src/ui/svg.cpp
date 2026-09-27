@@ -621,20 +621,12 @@ void svg_art::release_gpu() const
 }
 
 // The texture is the picture resampled to about the size it gets drawn at, so
-// the GPU never has to minify it (ImGui textures have no mipmaps, and the
-// panel art is 2000 px wide landing in about 900 -- that would shimmer). The
-// downscaling itself is load_pixels' 2x2 box filter, one mip level at a time.
-//
-// The size is **rounded down to a multiple of this**, which matters more than it
-// looks. The panel coordinates are fractional, so `scale()` hands neighbouring
-// buttons rectangles one pixel apart (the 18 category keys come out 48 or 49
-// wide), and a size that tracked the rectangle exactly would remake the texture
-// between two calls in the *same* frame. That frees a texture the draw list
-// already points at, and the Metal window died on it with "ImDrawCmd is
-// referring to ImTextureData that wasn't uploaded". Rounding down keeps every
-// use of one picture on one texture, and lands the texture just under the
-// destination, so the GPU magnifies a little rather than minifies -- which is
-// the harmless direction.
+// the GPU does not have to minify it: ImGui textures have no mipmaps, and the
+// panel background is 2000 px wide landing in about 700, which would shimmer.
+// The downscaling itself is load_pixels' 2x2 box filter, one mip level at a
+// time. Rounding the size *down* to a multiple of this keeps the texture just
+// under its destination, so the GPU magnifies a little or lands 1:1 -- the
+// harmless direction, and less memory than rounding up would take.
 static constexpr int SIZE_GRAIN = 8;
 static int grain(int px) { return std::max(SIZE_GRAIN, px / SIZE_GRAIN * SIZE_GRAIN); }
 

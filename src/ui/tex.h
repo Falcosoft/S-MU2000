@@ -57,11 +57,32 @@ inline std::vector<user_tex> &user_textures()
 	return all;
 }
 
+// A texture that has been replaced, but whose graphics object the backend has
+// not finished with. ImGui's own font atlas retires textures exactly this way
+// (ImFontAtlasTextureAdd sets WantDestroyNextFrame), and the two-frame wait is
+// not optional: freeing an ImTextureData while a draw command still points at
+// it is what took the Metal window down with "ImDrawCmd is referring to
+// ImTextureData that wasn't uploaded to graphics system".
+struct retired_tex {
+	ImGuiContext *ctx;
+	ImTextureData *data;
+	ImU64         marked;   // the frame it was retired on
+};
+
+inline std::vector<retired_tex> &retired_textures()
+{
+	static std::vector<retired_tex> all;
+	return all;
+}
+
 // Called by the window teardown (imgui_shell.h / imgui_shell_sdl.h) just
 // before DestroyContext: everything still registered goes away with the
 // context, and every owner is emptied so its destructor has nothing to do
 // (defined below, after tex is complete)
 inline void drop_user_textures();
+
+// Once per frame, before anything is drawn. See tex::retire.
+inline void drop_retired_textures();
 
 class tex
 {
@@ -79,7 +100,7 @@ public:
 			return false;
 		if (m_data && m_w == w && m_h == h)
 			return true;
-		release();
+		retire();
 		ImGuiContext *ctx = ImGui::GetCurrentContext();
 		if (!ctx)
 			return false;                 // no context: the picture just does not show
@@ -97,7 +118,44 @@ public:
 	// The context took the texture away with it (drop_user_textures)
 	void forget() { m_data = nullptr; m_w = m_h = 0; }
 
-	// Otherwise: unregister from whichever context owns it, then free
+	// Hand the texture back the way ImGui hands back its own: queue it for
+	// destruction and let the backend drop the graphics object when it is
+	// done, instead of unregistering and freeing here. ImTextureData says so
+	// itself -- WantDestroyNextFrame is "may still be used in the current
+	// frame" -- and this code used to ignore that. Freeing mid-frame is
+	// invisible until a draw command recorded a moment earlier is read at the
+	// next Render(), and then it is a use-after-free: the Metal backend
+	// asserted on it, reading a Width of 0 and a garbage status out of memory
+	// the allocator had already handed to the next picture. It needs only one
+	// picture to be rebuilt twice in a frame, and the panel does that on its
+	// own: its coordinates are fractional, so the nine nav keys come out 32
+	// and 33 pixels tall on different calls, and the texture between them is
+	// rebuilt.
+	//
+	// The registry entry goes now (the owner has moved on), but the
+	// ImTextureData stays alive and registered until drop_retired_textures()
+	// sees the backend has finished with it.
+	void retire()
+	{
+		ImTextureData *t = m_data;
+		forget();
+		if (!t)
+			return;
+		ImGuiContext *ctx = ImGui::GetCurrentContext();
+		std::vector<user_tex> &all = user_textures();
+		for (size_t i = 0; i < all.size(); i++) {
+			if (all[i].data != t)
+				continue;
+			ctx = all[i].ctx;
+			all.erase(all.begin() + long(i));
+			break;
+		}
+		t->WantDestroyNextFrame = true;
+		retired_textures().push_back({ ctx, t, ImU64(ImGui::GetFrameCount()) });
+	}
+
+	// Teardown and layout reload, where nothing is drawing and there is no
+	// frame to be careful about. The re-upload path uses retire() above.
 	void release()
 	{
 		ImTextureData *t = m_data;
@@ -148,8 +206,35 @@ private:
 	int m_w = 0, m_h = 0;
 };
 
+// Hand back the pictures that were replaced. The backend clears TexID and
+// BackendUserData once it has released the graphics object (Metal and DX11
+// take an extra frame for in-flight rendering, SDL does not), and that is the
+// signal that the ImTextureData belongs to us again -- not Status, which a
+// texture that was never uploaded has not reached either. A picture that is
+// somehow never reported is forced out after a few frames, where no draw
+// command can still name it: the draw list is cleared every frame.
+inline void drop_retired_textures()
+{
+	std::vector<retired_tex> &r = retired_textures();
+	const ImU64 now = ImU64(ImGui::GetFrameCount());
+	for (size_t i = 0; i < r.size();) {
+		ImTextureData *t = r[i].data;
+		const bool gone = t->TexID == ImTextureID_Invalid && t->BackendUserData == NULL;
+		if (gone || now >= r[i].marked + 8) {
+			ImGuiContext *prev = ImGui::GetCurrentContext();
+			ImGui::SetCurrentContext(r[i].ctx);
+			ImGui::UnregisterUserTexture(t);
+			ImGui::SetCurrentContext(prev);
+			IM_DELETE(t);
+			r.erase(r.begin() + long(i));
+		} else
+			i++;
+	}
+}
+
 inline void drop_user_textures()
 {
+	drop_retired_textures();
 	std::vector<user_tex> &all = user_textures();
 	for (const user_tex &u : all) {
 		ImGuiContext *prev = ImGui::GetCurrentContext();
