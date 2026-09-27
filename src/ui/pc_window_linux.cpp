@@ -168,6 +168,14 @@ bool pc_window::create(std::string &err)
 	ImGui::SetCurrentContext(m_imgui);
 	ImGuiIO &io = ImGui::GetIO();
 	io.ConfigFlags |= ImGuiConfigFlags_NavEnableKeyboard;
+	io.IniFilename = nullptr;       // no imgui.ini littered into the working folder
+
+	// The same look the other four windows get (pc_window.cpp, pc_window_mac.mm).
+	// This copy of the setup was missing it, so the editor windows were the only
+	// ones in ImGui's default light style with square frames.
+	ImGui::StyleColorsDark();
+	ImGuiStyle &st = ImGui::GetStyle();
+	st.FrameRounding = 3;
 
 	const std::string font = cjk_font_file();
 	if (!font.empty())
