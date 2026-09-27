@@ -4,21 +4,22 @@
 
   python tools/split_instances.py 曲.mid [出力.mid] [--n 4] [--release 0.5] [--files]
 
-  出力を省くと「曲_split4.mid」。口 A-D（FF 21）のトラックを n 本持つ形式 1 の
-  ファイルにする。口 1 つを S-MU2000 1 台で受ける（gui.exe を n 個立ち上げて、
+  出力を省くと「曲_split4.mid」。形式 1 で、1 本目がテンポなどのメタ（コンダクター）、
+  あとは口 A-D（FF 21）× チャンネルごとに 1 本ずつ（Domino は 1 トラックに
+  1 チャンネルでないと開けない）と、口ごとの SysEx のトラック。口 1 つを S-MU2000 1 台で受ける（gui.exe を n 個立ち上げて、
   それぞれ別の MIDI ポートで受ける。DAW なら n 個挿して、トラックごとに分ける）
   --n        台数（2-4。既定 4）
   --release  離した音をあと何秒「鳴っている」と数えるか（既定 0.5）
-  --files    口ごとに分けたファイル（曲_split4_A.mid …）も書く。どれも口 A の
-             1 本だけなので、1 台ずつ鳴らして確かめるのに使う
+  --files    台ごとに分けたファイル（曲_split4_A.mid …）も書く。口の指定が無い
+             （口 A で受ける）ので、1 台ずつ鳴らして確かめるのに使う
 
 振り分け方:
 * ノートオンは、そのとき鳴っている音（押している音と、離して --release 秒以内の音）が
   いちばん少ない台へ。同じ数なら若い口
 * ノートオフ（とベロシティ 0 のノートオン）は、対応するノートオンを受けた台へ
   （同じチャンネル・同じ鍵の押しを古い順に対応させる）
-* ノート以外（音色・CC・ペダル・ピッチベンド・SysEx・テンポなどのメタ）は全部の台へ。
-  どの台も同じ設定で鳴る。テンポと拍子は 1 本目のトラックにだけ置く
+* ノート以外（音色・CC・ペダル・ピッチベンド・SysEx）は全部の台へ。どの台も同じ設定で
+  鳴る。テンポ・拍子・曲名などのメタは 1 本目（コンダクター）にだけ置く
 * 元のファイルの口の指定（FF 21）は無視する（口 A の 16 パートの曲を前提にする）
 
 気を付けること: 1 台の中で閉じる働き（モノのパートのレガート、ポルタメント、同じ鍵の
@@ -204,20 +205,44 @@ def main():
             out[j].append((tick, raw))
 
     names = 'ABCD'
-    tracks = b''
+
+    def name_ev(text):
+        b = text.encode()
+        return (0, b'\xff\x03' + vlq(len(b)) + b)
+
+    def split_tracks(items, port):
+        """1 台ぶんを「チャンネルごとのトラック」と「SysEx のトラック」に分ける（Domino は
+        1 トラック 1 チャンネルでないと開けない）。メタは捨てる（コンダクターに置く）"""
+        per_ch, sysex = {}, []
+        for t, r in items:
+            if r[0] == 0xff:
+                continue
+            if r[0] in (0xf0, 0xf7):
+                sysex.append((t, r))
+            else:
+                per_ch.setdefault(r[0] & 15, []).append((t, r))
+        head = [] if port is None else [(0, b'\xff\x21\x01' + bytes([port]))]
+        label = '' if port is None else 'Port %s ' % names[port]
+        out_tracks = []
+        if sysex:
+            out_tracks.append(track_bytes(head + [name_ev(label + 'SysEx')] + sysex))
+        for ch in sorted(per_ch):
+            out_tracks.append(track_bytes(head + [name_ev('%sCh%d' % (label, ch + 1))] + per_ch[ch]))
+        return out_tracks
+
+    # 1 本目はテンポ・拍子・曲名などのメタだけ（コンダクター）
+    conductor = track_bytes([(t, r) for t, r in out[0] if r[0] == 0xff])
+    tracks = [conductor]
     for j in range(n):
-        head = [(0, b'\xff\x21\x01' + bytes([j])),
-                (0, b'\xff\x03' + vlq(len('Port ' + names[j])) + ('Port ' + names[j]).encode())]
-        tracks += track_bytes(head + out[j])
-    open(dst, 'wb').write(b'MThd' + struct.pack('>IHHH', 6, 1, n, div) + tracks)
+        tracks += split_tracks(out[j], j)
+    open(dst, 'wb').write(b'MThd' + struct.pack('>IHHH', 6, 1, len(tracks), div) + b''.join(tracks))
     if files:
-        # 1 台ずつのファイル。テンポ・拍子・調は 1 本目にしか無いので、ほかの台にも写す
-        meta = [(t, r) for t, r in out[0] if r[:2] in (b'\xff\x51', b'\xff\x58', b'\xff\x59')]
+        # 1 台ずつのファイル（口の指定なし。どれも口 A で受ける）
         stem = dst[:-4] if dst.lower().endswith('.mid') else dst
         for j in range(n):
-            items = out[j] if j == 0 else sorted(meta + out[j], key=lambda e: e[0])
+            tr = [conductor] + split_tracks(out[j], None)
             open('%s_%s.mid' % (stem, names[j]), 'wb').write(
-                b'MThd' + struct.pack('>IHHH', 6, 0, 1, div) + track_bytes(items))
+                b'MThd' + struct.pack('>IHHH', 6, 1, len(tr), div) + b''.join(tr))
     print('%s: %d 台に分けた（ノートオン %s）' % (dst, n, ' / '.join('%s %d' % (names[j], count[j]) for j in range(n))))
     print('同時に鳴っている音の見積もり（押している音と離して %.1f 秒以内）: 1 台なら最大 %d、'
           '分けたあとは %s' % (rel, single_peak, ' / '.join('%s %d' % (names[j], peak[j]) for j in range(n))))
