@@ -149,6 +149,7 @@ void out_port_combo();                  // 送り先の品書き（と、送っ�
 void out_begin_frame();
 void out_hover_param(const xg::param &p, int part);  // パートや共通のパラメータ 1 つ
 void out_hover_drum(int set, int key, int idx);       // ドラムセットアップの 1 項目
+void out_hover_drum_row(int set, int key);            // ドラムセットアップの 1 鍵ぶん（23 項目）
 void out_hover_program(int part);                     // 音色（バンクセレクトとプログラムチェンジ）
 // 生の操作子（ホイール）。slot は受信の口 × 16 + ch、bend が偽なら CC1（value 0-127）、
 // 真ならピッチベンド（value は真ん中からの離れ -8192〜8191）

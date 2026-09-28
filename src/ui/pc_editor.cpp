@@ -402,6 +402,11 @@ void pc_editor::drum_page(xg::model &m, const xg_snapshot &ram, bridge &br)
 		const u8 msg[] = { 0xf0, 0x43, 0x10, 0x4c, 0x00, 0x00, 0x7d, u8(m_drum_set), 0xf7 };
 		br.send(msg, sizeof(msg));
 	}
+	// Ctrl＋右クリックで外へ送る先（音色の窓と同じ設定）
+	if (out_ready()) {
+		ImGui::SameLine(0, fs * 1.5f);
+		out_port_combo();
+	}
 	// 楽器名は、その組を使う最初のパートのキットから（ROM の鍵ごとの名前）。使うパートが無ければ GM の並びを目安に
 	const std::string kit = first_user >= 0 ? drum_kit_name(m, first_user) : std::string();
 	if (!kit.empty())
@@ -438,11 +443,16 @@ void pc_editor::drum_page(xg::model &m, const xg_snapshot &ram, bridge &br)
 			ImGui::TableNextColumn();
 			const bool here = first_user >= 0 && shape_window_part() == first_user && shape_drum_key() == key;
 			ImGui::Selectable(drum_key_text(key).c_str(), here);
+			// 鍵と名前の上で Ctrl＋右クリックすると、その鍵の 23 項目をまとめて送る
+			if (ImGui::IsItemHovered())
+				out_hover_drum_row(m_drum_set, key);
 			bool open = ImGui::IsItemHovered() && ImGui::IsMouseDoubleClicked(ImGuiMouseButton_Left);
 			ImGui::TableNextColumn();
 			ImGui::PushStyleColor(ImGuiCol_Text, ImGui::GetColorU32(ImGuiCol_TextDisabled));
 			ImGui::Selectable((kit.empty() ? std::string(gm_drum_name(key)) : drum_key_name(m, first_user, key)).c_str(), here);
 			ImGui::PopStyleColor();
+			if (ImGui::IsItemHovered())
+				out_hover_drum_row(m_drum_set, key);
 			open = open || (ImGui::IsItemHovered() && ImGui::IsMouseDoubleClicked(ImGuiMouseButton_Left));
 			if (open && first_user >= 0)
 				request_drum(first_user, key);
@@ -466,6 +476,8 @@ void pc_editor::drum_page(xg::model &m, const xg_snapshot &ram, bridge &br)
 						m_wheel_taken = true;
 					}
 				}
+				if (ImGui::IsItemHovered())
+					out_hover_drum(m_drum_set, key, i);      // Ctrl＋右クリックでこの項目だけ送る
 				ImGui::PopID();
 				if (nv != v)
 					drum_write(br, m_drum_set, key, i, nv);
@@ -481,6 +493,7 @@ void pc_editor::draw(xg::model &m, const xg_snapshot &ram, bridge &br)
 {
 	m_ram = &ram;
 	m_wheel_taken = false;
+	out_begin_frame();                // Ctrl＋右クリックで送るもの（ドラムの面）
 
 	const ImGuiViewport *vp = ImGui::GetMainViewport();
 	ImGui::SetNextWindowPos(vp->WorkPos);
@@ -552,6 +565,7 @@ void pc_editor::draw(xg::model &m, const xg_snapshot &ram, bridge &br)
 	}
 	ImGui::EndChild();
 
+	out_end_frame(m, ram, br);
 	ImGui::End();
 
 	// つまみが取らなかったホイールはスクロール。しばらくつまみに取らせない

@@ -504,7 +504,7 @@ void drum_write(bridge &br, int set, int key, int idx, int value, bool drag)
 namespace {
 out_hooks g_out;
 bool g_out_set = false;
-enum class out_kind { none, param, drum, program, group, live };
+enum class out_kind { none, param, drum, drum_row, program, group, live };
 struct out_target {
 	out_kind k = out_kind::none;
 	const xg::param *p = nullptr;
@@ -543,6 +543,14 @@ void out_hover_drum(int set, int key, int idx)
 	g_hover.set = set;
 	g_hover.key = key;
 	g_hover.idx = idx;
+}
+
+void out_hover_drum_row(int set, int key)
+{
+	g_hover = out_target{};
+	g_hover.k = out_kind::drum_row;
+	g_hover.set = set;
+	g_hover.key = key;
 }
 
 void out_hover_program(int part)
@@ -598,7 +606,7 @@ void out_port_combo()
 		ImGui::EndCombo();
 	}
 	if (ImGui::IsItemHovered())
-		hint("%s", UI_TEXT(ps_out_hint, "Where Ctrl+right-click sends\nCtrl+right-click a value, fader or key to send just that parameter (not to the sound engine) so a sequencer can record it. A section heading sends the whole section, the MW wheel sends CC1, the bend wheel sends pitch bend, a voice or kit row sends bank select and program change. Panel ports: parts on A go to THRU A, on B to THRU B"));
+		hint("%s", UI_TEXT(ps_out_hint, "Where Ctrl+right-click sends\nCtrl+right-click a value, fader or key to send just that parameter (not to the sound engine) so a sequencer can record it. A section heading sends the whole section, the MW wheel sends CC1, the bend wheel sends pitch bend, a voice or kit row sends bank select and program change; in the editor's drum page, a cell sends that item and a key or name sends the whole key. Panel ports: parts on A go to THRU A, on B to THRU B"));
 	if (!g_out_note.empty() && ImGui::GetTime() - g_out_note_at < 4.0) {
 		ImGui::SameLine();
 		ImGui::TextDisabled("%s", g_out_note.c_str());
@@ -641,6 +649,17 @@ void out_end_frame(xg::model &m, const xg_snapshot &ram, bridge &br)
 		char buf[96];
 		std::snprintf(buf, sizeof(buf), "DRUMS%d %s %s = %s", g_hover.set + 1, drum_key_text(g_hover.key).c_str(), d.head,
 		              drum_value_text(g_hover.idx, v).c_str());
+		what = buf;
+		break;
+	}
+	case out_kind::drum_row: {
+		for (int i = 0; i < XG_DRUM_PARAMS; i++) {
+			const int v = drum_value(ram, g_hover.set, g_hover.key, i);
+			msgs.push_back({ 0xf0, 0x43, 0x10, 0x4c, u8(0x30 + g_hover.set), u8(g_hover.key), drum_params()[i].addr,
+			                 u8(v & 0x7f), 0xf7 });
+		}
+		char buf[64];
+		std::snprintf(buf, sizeof(buf), "DRUMS%d %s", g_hover.set + 1, drum_key_text(g_hover.key).c_str());
 		what = buf;
 		break;
 	}

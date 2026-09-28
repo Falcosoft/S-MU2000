@@ -1223,6 +1223,8 @@ void part_mode_combo(int part, xg::model &m, const xg_snapshot &ram, bridge &br)
 		ImGui::EndCombo();
 	}
 	if (ImGui::IsItemHovered())
+		out_hover_param(pm, part);           // Ctrl＋右クリックでパートモードを送る
+	if (ImGui::IsItemHovered())
 		hint("Part Mode  %s\n%s", xg::format(pm, mode).c_str(),
 		     UI_TEXT(ps_drum_mode_hint, "Which drum setup (DRUMS1-4) this part uses. DRUM (no number) takes no setup. Changing the kit resets the setup it uses"));
 }
