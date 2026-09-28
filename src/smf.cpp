@@ -41,9 +41,15 @@ int port_from_track_name(const std::string &raw)
 		n = n * 10 + (s[i++] - '0');
 		digits++;
 	}
-	if (!digits || i != s.size() || n < 1 || n > 16)
+	if (!digits || n < 1 || n > 16)
 		return -1;
-	return port;
+	if (i == s.size())
+		return port;
+	// 番号の後ろに音色名などが続く形（「A01-FrHorn 2」「B10 Shroud」）は、**2 桁の番号**と区切りが
+	// あるときだけ読む（「B3 Organ」のような楽器名と紛れないように）
+	if (digits == 2 && (s[i] == '-' || s[i] == ' ' || s[i] == '_' || s[i] == ':'))
+		return port;
+	return -1;
 }
 
 namespace {
@@ -112,6 +118,12 @@ bool load(const std::string &path, std::vector<event> &out, std::string &err)
 					                (u32(d[p]) << 16) | (d[p+1] << 8) | d[p+2], 0 });
 				if (type == 0x21 && l == 1) {
 					port = d[p];
+					explicit_port = true;
+				}
+				// **ヤマハのシーケンサー固有のポート指定**（`FF 7F 04 43 00 01 pp`。pp は 0 始まり）。
+				// ヤマハの MU128 などの 3〜4 口の曲がこれで口を言う（issue #63 の 05FINALE）
+				if (type == 0x7f && l == 4 && p + 4 <= end && d[p] == 0x43 && d[p + 1] == 0x00 && d[p + 2] == 0x01) {
+					port = d[p + 3];
 					explicit_port = true;
 				}
 				if (type == 0x03 && !explicit_port && l >= 1 && l <= 64) {
