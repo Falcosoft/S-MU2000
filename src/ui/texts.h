@@ -223,6 +223,7 @@ struct ui_texts {
 	const char *ps_tab_drum;
 	const char *ps_drum_not;
 	const char *ps_drum_plain;
+	const char *ps_drum_mode_hint;
 	const char *ps_drum_play;
 	const char *ps_drum_follow;
 	const char *ps_drum_title_mix;

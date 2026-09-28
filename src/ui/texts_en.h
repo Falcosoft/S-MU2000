@@ -188,6 +188,7 @@ inline const ui_texts &en_texts()
 		.ps_tab_drum = "Drum",
 		.ps_drum_not = "This part is not a drum part (part mode DRUMS1-4). Choose a drum kit or set the part mode to DRUMS1-4 to edit its keys here",
 		.ps_drum_plain = "Part mode DRUM (no number) ignores every drum setup. Set it to DRUMS1-4 to edit its keys here",
+		.ps_drum_mode_hint = "Which drum setup (DRUMS1-4) this part uses. DRUM (no number) takes no setup. Changing the kit resets the setup it uses",
 		.ps_drum_play = "Play",
 		.ps_drum_follow = "Follow played keys",
 		.ps_drum_title_mix = "Pitch, level, pan and sends",

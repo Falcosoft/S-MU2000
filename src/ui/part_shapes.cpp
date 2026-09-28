@@ -1185,12 +1185,46 @@ void drum_release(bridge &br)
 	g_drum_held = -1;
 }
 
+// パートモード（08 pp 07）の選択。NORMAL / DRUM / DRUMS1-4。ここで DRUMS の組を付け替える。
+// 同じ組を使っているほかのパートがあれば、カーソルを載せると並べる
+void part_mode_combo(int part, xg::model &m, const xg_snapshot &ram, bridge &br)
+{
+	const xg::param &pm = P("part.mode");
+	int mode = ram.parts[part][0x07];
+	m.get(pm, part, mode);
+	ImGui::AlignTextToFramePadding();
+	ImGui::TextUnformatted("Part Mode");
+	ImGui::SameLine();
+	ImGui::SetNextItemWidth(ImGui::GetFontSize() * 6.5f);
+	if (ImGui::BeginCombo("##pmode", xg::format(pm, mode).c_str())) {
+		for (int v = pm.min; v <= pm.max; v++) {
+			std::string label = xg::format(pm, v);
+			// ほかに同じ組を使っているパート
+			if (v >= 2) {
+				std::string users;
+				for (int p = 0; p < XG_PARTS; p++)
+					if (p != part && ram.parts[p][0x07] == v)
+						users += (users.empty() ? "" : ", ") + part_name(p);
+				if (!users.empty())
+					label += "  (" + users + ")";
+			}
+			if (ImGui::Selectable(label.c_str(), v == mode) && v != mode)
+				br.send(m.set(pm, part, v));
+		}
+		ImGui::EndCombo();
+	}
+	if (ImGui::IsItemHovered())
+		hint("Part Mode  %s\n%s", xg::format(pm, mode).c_str(),
+		     UI_TEXT(ps_drum_mode_hint, "Which drum setup (DRUMS1-4) this part uses. DRUM (no number) takes no setup. Changing the kit resets the setup it uses"));
+}
+
 void drum_tab(int part, xg::model &m, const xg_snapshot &ram, bridge &br, float room_h)
 {
 	const float fs = ImGui::GetFontSize();
 	const ImGuiStyle &st = ImGui::GetStyle();
 	const int set = drum_set_of(ram, part);
 	if (set < 0) {
+		part_mode_combo(part, m, ram, br);
 		ImGui::Spacing();
 		ImGui::TextWrapped("%s", ram.parts[part][0x07] == 1
 		                             ? UI_TEXT(ps_drum_plain, "Part mode DRUM (no number) ignores every drum setup. Set it to DRUMS1-4 to edit its keys here")
@@ -1214,8 +1248,10 @@ void drum_tab(int part, xg::model &m, const xg_snapshot &ram, bridge &br, float 
 		g_drum_prev[0] = now[0];
 		g_drum_prev[1] = now[1];
 	}
+	part_mode_combo(part, m, ram, br);
+	ImGui::SameLine();
 	ImGui::AlignTextToFramePadding();
-	ImGui::Text("DRUMS%d  %s", set + 1, drum_kit_name(m, part).c_str());
+	ImGui::TextUnformatted(drum_kit_name(m, part).c_str());
 	ImGui::SameLine();
 	// 鍵の名前は今のキットの楽器名（ROM の表）。音の無い鍵は番号だけ
 	auto key_label = [&](int k) {

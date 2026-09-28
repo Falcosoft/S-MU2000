@@ -188,6 +188,7 @@ inline const ui_texts &ja_texts()
 		.ps_tab_drum = "ドラム",
 		.ps_drum_not = "このパートはパートモードが DRUMS1-4 のドラムではない。ドラムキットを選ぶか、パートモードを DRUMS1-4 にすると、ここで鍵ごとに触れる",
 		.ps_drum_plain = "パートモード DRUM（番号なし）はどのドラムセットアップも受けない。DRUMS1-4 にすると、ここで鍵ごとに触れる",
+		.ps_drum_mode_hint = "このパートが使うドラムセットアップ（DRUMS1-4）。DRUM（番号なし）はどの組も使わない。キットを選び直すと、使っている組は既定値に戻る",
 		.ps_drum_play = "鳴らす",
 		.ps_drum_follow = "弾いた鍵を追う",
 		.ps_drum_title_mix = "高さ・音量・パン・送り",
