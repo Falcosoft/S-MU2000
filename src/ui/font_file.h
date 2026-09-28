@@ -25,12 +25,14 @@
 // the first face it accepts.
 struct face_bytes {
 	std::vector<unsigned char> data;
-	int                        face = 0;   // index inside a TTC; 0 for a lone font
+	int                        face = 0;    // index inside a TTC; 0 for a lone font
+	float                      em = 1.0f;   // hhea span per em; stb sizes by the
+	                                        // former, everyone else by the latter
 };
 
 struct face_offer {
-	std::string                          path;
-	std::function<face_bytes()>          fetch;
+	std::string                 path;
+	std::function<face_bytes()> fetch;
 };
 
 // The families, most wanted first. The first five ship with every macOS since
@@ -88,8 +90,6 @@ static int CALLBACK cjk_collect_family(const LOGFONTA *lf, const TEXTMETRICA *,
                                        DWORD, LPARAM param)
 {
 	auto *names = reinterpret_cast<std::vector<std::string> *>(param);
-	if (names->size() >= 16)
-		return 0;                          // more than enough to choose from
 	const std::string name = lf->lfFaceName;
 	if (name.empty())
 		return 1;
@@ -158,6 +158,40 @@ static size_t cjk_face_offsets(const unsigned char *d, size_t n,
 	return count;
 }
 
+static int cjk_ts16(const unsigned char *p)
+{
+	return int(short((unsigned(p[0]) << 8) | p[1]));
+}
+
+// hhea span per em, for the face at `off`. stb sizes by the hhea span while
+// GDI maps to the em; the ratio puts stb back on em terms. 1.0 on anything
+// unexpected: an unscaled honest size beats a wild factor.
+static float cjk_em_scale(const unsigned char *d, size_t n, size_t off)
+{
+	unsigned upm = 0;
+	int ha = 0, hd = 0;
+	if (off + 12 <= n) {
+		const unsigned tables = cjk_tt16(d + off + 4);
+		for (unsigned i = 0; i < tables; i++) {
+			const size_t rec = off + 12 + size_t(i) * 16;
+			if (rec + 16 > n)
+				break;
+			const unsigned tag = cjk_tt32(d + rec);
+			const size_t at = cjk_tt32(d + rec + 8);
+			if (tag == 0x68656164u && at + 20 <= n)        // 'head'
+				upm = cjk_tt16(d + at + 18);
+			else if (tag == 0x68686561u && at + 8 <= n) {  // 'hhea'
+				ha = cjk_ts16(d + at + 4);
+				hd = cjk_ts16(d + at + 6);
+			}
+		}
+	}
+	if (!upm || ha - hd <= 0)
+		return 1.0f;
+	const float k = float(ha - hd) / float(upm);
+	return k >= 0.5f && k <= 2.0f ? k : 1.0f;
+}
+
 // One GetFontData call; only the data call below differs between toolchains.
 static bool cjk_get_font_bytes(HDC dc, DWORD tag, std::vector<unsigned char> &data)
 {
@@ -203,7 +237,11 @@ static face_bytes cjk_gdi_bytes(const char *family, int weight, bool bold)
 		const int target = GetTextMetricsA(dc, &tm) && tm.tmWeight
 		                     ? int(tm.tmWeight)
 		                     : (bold ? FW_BOLD : FW_NORMAL);
-		if (!cjk_get_font_bytes(dc, 0x74746366u /* 'ttcf' */, out.data))
+		// The tag is byte-swapped relative to the file: 'ttcf' on disk is
+		// 74 74 63 66, but GetFontData takes it little-endian, 0x66637474.
+		// The other order compiles fine and returns GDI_ERROR for the size,
+		// so the walk below silently ends at the embedded font.
+		if (!cjk_get_font_bytes(dc, 0x66637474u /* 'ttcf' */, out.data))
 			cjk_get_font_bytes(dc, 0, out.data);   // a lone font, not a collection
 		SelectObject(dc, was);
 		DeleteDC(dc);
@@ -214,7 +252,7 @@ static face_bytes cjk_gdi_bytes(const char *family, int weight, bool bold)
 			if (!count)
 				out.data.clear();
 			else {
-				size_t best = 0;
+				size_t best = 0, best_off = offs[0];
 				unsigned gap = ~0u;
 				for (size_t i = 0; i < count; i++) {
 					const int w = cjk_face_weight_at(out.data.data(),
@@ -225,8 +263,10 @@ static face_bytes cjk_gdi_bytes(const char *family, int weight, bool bold)
 					if (d < gap) {
 						gap = d;
 						best = i;
+						best_off = offs[i];
 					}
 				}
+				out.em = cjk_em_scale(out.data.data(), out.data.size(), best_off);
 				out.face = int(best);
 			}
 		}
@@ -249,7 +289,7 @@ inline void cjk_offers(bool bold, std::vector<face_offer> &out)
 	if (dc)
 		DeleteDC(dc);
 	// GDI enumerates by name, so the wanted families move up front, in order;
-// the rest follow as enumerated.
+	// the rest follow as enumerated.
 	std::vector<std::string> ordered;
 	for (const char *want : cjk_wanted_families)
 		for (const std::string &have : families)
@@ -268,6 +308,29 @@ inline void cjk_offers(bool bold, std::vector<face_offer> &out)
 		                [family, weight, bold] {
 			                return cjk_gdi_bytes(family.c_str(), weight, bold);
 		                } });
+}
+
+// The XG editor windows keep upstream's exact list: first existing file, face
+// 0. The unified walk above resolves the same family but picks by weight
+// (Regular 400), while upstream renders face 0 (Medium 500) -- visibly heavier
+// at UI sizes, and the editors were already ImGui upstream, so they must not
+// move. One deliberate fork, documented here, not drift: the panel cannot use
+// files at all (its bold must pair with its regular), the editors never needed
+// anything else.
+inline ImFont *add_cjk_editor_font(ImFontAtlas *atlas, float px = 16.0f)
+{
+	static const char *const FILES[] = {
+		"C:\\Windows\\Fonts\\YuGothM.ttc",
+		"C:\\Windows\\Fonts\\meiryo.ttc",
+		"C:\\Windows\\Fonts\\msgothic.ttc",
+	};
+	for (const char *path : FILES) {
+		if (GetFileAttributesA(path) == INVALID_FILE_ATTRIBUTES)
+			continue;
+		if (ImFont *font = atlas->AddFontFromFileTTF(path, px))
+			return font;
+	}
+	return atlas->AddFontDefault();
 }
 
 #elif defined(__APPLE__)
@@ -391,7 +454,7 @@ static bool cjk_offer_bytes(const face_offer &offer, face_bytes &out)
 // The buffer outlives every atlas (FontDataOwnedByAtlas = false), which the
 // lazy bakes need; an empty walk is remembered, so a fontless machine does not
 // re-enumerate on every call.
-inline const void *cjk_face_data(bool bold, size_t &bytes, int &face)
+inline const void *cjk_face_data(bool bold, size_t &bytes, int &face, float &em)
 {
 	static bool walked[2] = { false, false };
 	static face_bytes kept[2];
@@ -410,19 +473,32 @@ inline const void *cjk_face_data(bool bold, size_t &bytes, int &face)
 	}
 	bytes = kept[slot].data.size();
 	face = kept[slot].face;
+	em = kept[slot].em;
 	return kept[slot].data.empty() ? nullptr : kept[slot].data.data();
 }
 
-inline const void *cjk_font_data(size_t &bytes, int &face)
+inline const void *cjk_font_data(size_t &bytes, int &face, float &em)
 {
-	return cjk_face_data(false, bytes, face);
+	return cjk_face_data(false, bytes, face, em);
 }
 
 // The bold face, the same way; null when the machine has none, and the caller
 // draws the regular face instead.
-inline const void *cjk_bold_font_data(size_t &bytes, int &face)
+inline const void *cjk_bold_font_data(size_t &bytes, int &face, float &em)
 {
-	return cjk_face_data(true, bytes, face);
+	return cjk_face_data(true, bytes, face, em);
+}
+
+// The stb-to-em factor for one weight: panel and toolbar sizes are multiplied
+// by it so text lands at em size like GDI's. 1.0 off Windows and for the
+// editors, which must not move (same rasterizer both sides there).
+inline float cjk_face_em(bool bold)
+{
+	size_t bytes = 0;
+	int face = 0;
+	float em = 1.0f;
+	cjk_face_data(bold, bytes, face, em);
+	return em;
 }
 
 // Put one CJK face into an atlas at a given size, or ImGui's built-in when the
@@ -435,10 +511,11 @@ inline ImFont *add_cjk_font(ImFontAtlas *atlas, float px = 16.0f, bool bold = fa
 {
 	size_t bytes = 0;
 	int face = 0;
-	const void *data = bold ? cjk_bold_font_data(bytes, face) : cjk_font_data(bytes, face);
+	float em = 1.0f;
+	const void *data = bold ? cjk_bold_font_data(bytes, face, em) : cjk_font_data(bytes, face, em);
 	if (!data && bold) {
 		size_t regular = 0;
-		data = cjk_font_data(regular, face);
+		data = cjk_font_data(regular, face, em);
 		bytes = regular;
 	}
 	if (data) {

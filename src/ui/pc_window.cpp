@@ -147,9 +147,10 @@ bool pc_window::create(HINSTANCE inst, std::string &err)
 	style.FontScaleDpi = scale;
 	style.FrameRounding = 3;
 
-	// One font setup for the whole program: ui/font_file.h finds a Japanese
-	// face, checks it can draw what the panel writes, and reads it once.
-	add_cjk_font(io.Fonts);
+	// The editor windows keep upstream's exact font: first existing file, face 0
+	// (ui/font_file.h). The panel's unified walk must not serve here -- it
+	// picks by weight and renders a lighter face than upstream's editors.
+	add_cjk_editor_font(io.Fonts);
 
 	ImGui_ImplWin32_Init(m_hwnd);
 	ImGui_ImplDX11_Init(m_dev, m_ctx);

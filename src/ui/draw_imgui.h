@@ -79,7 +79,12 @@ inline float cap_height(ImFont *font, float px)
 	ImFontBaked *baked = font->GetFontBaked(px);
 	if (!baked || baked->Size <= 0.0f)
 		return px * 0.7f;
-	return baked->Ascent * (px / baked->Size);
+	// The real cap height, off the H. Ascent covers kanji and the line gap,
+	// which sits every legend too low -- SOLO fell clean below its key.
+	if (const ImFontGlyph *h = baked->FindGlyphNoFallback('H'))
+		if (h->Y1 > h->Y0)
+			return (h->Y1 - h->Y0) * (px / baked->Size);
+	return px * 0.7f;
 }
 
 inline ImVec2 pos_of(const RECT &r) { return ImVec2(float(r.left), float(r.top)); }

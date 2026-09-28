@@ -381,17 +381,23 @@ void panel::build_fonts() const
 	// thicken the stems, but it closes the counters and blurs. Slots 0 (label)
 	// and 3 (key) are the two that take it; the other four stay regular, and a
 	// machine with no bold to be had draws the regular face there too.
-	ImFont *slot[6] = { add_cjk_font(atlas, label_px, true), add_cjk_font(atlas, small_px),
-	                    add_cjk_font(atlas, tiny_px),     add_cjk_font(atlas, key_px, true),
-	                    add_cjk_font(atlas, tag_px),      add_cjk_font(atlas, num_px) };
+	//
+	// Sizes are stb pixels times the em factor: stb sizes by the hhea span
+	// while GDI maps to the em, so without it everything lands small on faces
+	// whose hhea carries line spacing (about 25% on Yu Gothic UI, 1.0
+	// elsewhere -- macOS and the editors never move).
+	const float em = cjk_face_em(false), bem = cjk_face_em(true);
+	ImFont *slot[6] = { add_cjk_font(atlas, label_px * bem, true), add_cjk_font(atlas, small_px * em),
+	                    add_cjk_font(atlas, tiny_px * em),     add_cjk_font(atlas, key_px * bem, true),
+	                    add_cjk_font(atlas, tag_px * em),      add_cjk_font(atlas, num_px * em) };
 	m_fonts.label = slot[0]; m_fonts.small = slot[1]; m_fonts.tiny = slot[2];
 	m_fonts.key   = slot[3]; m_fonts.tag  = slot[4]; m_fonts.num  = slot[5];
-	m_fonts.label_px = float(label_px);
-	m_fonts.small_px = float(small_px);
-	m_fonts.tiny_px  = float(tiny_px);
-	m_fonts.key_px   = float(key_px);
-	m_fonts.tag_px   = float(tag_px);
-	m_fonts.num_px   = float(num_px);
+	m_fonts.label_px = float(label_px) * bem;
+	m_fonts.small_px = float(small_px) * em;
+	m_fonts.tiny_px  = float(tiny_px) * em;
+	m_fonts.key_px   = float(key_px) * bem;
+	m_fonts.tag_px   = float(tag_px) * em;
+	m_fonts.num_px   = float(num_px) * em;
 	for (int i = 0; i < 6; i++)
 		m_font_px[i] = want[i];
 	m_font_ctx = ctx;
@@ -708,26 +714,40 @@ void panel::draw_lcd_body(ImDrawList *dl, const snapshot &s, const lcd_geom &g) 
 	const double gap = DOT_GAP * d;
 	auto dotbox = [&](double l, double t, double w, double h, COLORREF ink,
 	                  double gp = -1.0) {
+		// No fringe while dots are small. It bleeds 0.5 px past every edge, so
+		// in a direction under 2 px it merges with the neighbour into solid
+		// black. GDI's FillRect has no fringe either, so small dots match it;
+		// large ones keep their smoothing.
+		const unsigned aa = dl->Flags & ImDrawListFlags_AntiAliasedFill;
+		if (std::min(w, h) < 2.0)
+			dl->Flags &= ~ImDrawListFlags_AntiAliasedFill;
 		if (gp < 0)
 			gp = gap;
 		const int gi = int(gp);
 		const double fr = gp - gi;
 		const bool part = fr > 0.05;
-		const double sw = w - gi - (part ? 1.0 : 0.0);
-		const double sh = h - gi - (part ? 1.0 : 0.0);
-		if (sw < 1.0 || sh < 1.0) {                 // 小さすぎる。隙間なしで塗る
-			im::fill(dl, ImVec2(float(l), float(t)),
-			         ImVec2(float(std::max(1.0, w)), float(std::max(1.0, h))), ink);
+		const double sw = std::max(0.0, w - gi - (part ? 1.0 : 0.0));
+		const double sh = std::max(0.0, h - gi - (part ? 1.0 : 0.0));
+		// The gap strips are always drawn, even under 1 px dots, so the
+		// divisions never vanish into solid black in a small window
+		if (sw > 0 && sh > 0)
+			im::fill(dl, ImVec2(float(l), float(t)), ImVec2(float(sw), float(sh)), ink);
+		if (!part) {
+			dl->Flags |= aa;
 			return;
 		}
-		im::fill(dl, ImVec2(float(l), float(t)), ImVec2(float(sw), float(sh)), ink);
-		if (!part)
-			return;
+		// Clip the strips to the cell; the neighbour repaints the overlap
+		const double rw = std::min(1.0, std::max(0.0, w - sw));
+		const double bh = std::min(1.0, std::max(0.0, h - sh));
 		const COLORREF edge = mix(ink, LCD_BACK, fr);
-		im::fill(dl, ImVec2(float(l + sw), float(t)), ImVec2(1.0f, float(sh)), edge);
-		im::fill(dl, ImVec2(float(l), float(t + sh)), ImVec2(float(sw), 1.0f), edge);
-		im::fill(dl, ImVec2(float(l + sw), float(t + sh)), ImVec2(1.0f, 1.0f),
-		         mix(ink, LCD_BACK, 1.0 - (1.0 - fr) * (1.0 - fr)));
+		if (rw > 0 && sh > 0)
+			im::fill(dl, ImVec2(float(l + sw), float(t)), ImVec2(float(rw), float(sh)), edge);
+		if (sw > 0 && bh > 0)
+			im::fill(dl, ImVec2(float(l), float(t + sh)), ImVec2(float(sw), float(bh)), edge);
+		if (rw > 0 && bh > 0)
+			im::fill(dl, ImVec2(float(l + sw), float(t + sh)), ImVec2(float(rw), float(bh)),
+			         mix(ink, LCD_BACK, 1.0 - (1.0 - fr) * (1.0 - fr)));
+		dl->Flags |= aa;
 	};
 
 	// 角度は真上が 0 度で時計回り
@@ -806,6 +826,7 @@ void panel::draw_lcd_body(ImDrawList *dl, const snapshot &s, const lcd_geom &g) 
 		const double ix = lx(LOW_ICON), iw = lw(LOW_ICON);
 		const int first = TOP_COLS + 3, last = LCD_COLS - 1;   // 20-22
 		const int nx = (last - first) * CELL_W, ny = LCD_ROWS * CELL_H;
+		const double gp = DOT_GAP * std::min(iw / nx, seg_h / ny);
 		for (int row = 0; row < LCD_ROWS; row++)
 			for (int col = first; col < last; col++) {
 				const u8 *c = s.dots + (row * LCD_COLS + col) * CELL_H;
@@ -819,7 +840,7 @@ void panel::draw_lcd_body(ImDrawList *dl, const snapshot &s, const lcd_geom &g) 
 						const double right = ix + (xx + 1) * iw / nx;
 						dotbox(left, top, std::max(1.0, right - left),
 						       std::max(1.0, bot - top),
-						       (s.lcd_on && BIT(c[y], 4 - x)) ? LCD_ON : FAINT);
+						       (s.lcd_on && BIT(c[y], 4 - x)) ? LCD_ON : FAINT, gp);
 					}
 				}
 			}
@@ -1098,8 +1119,11 @@ void panel::draw_key_print(ImDrawList *dl, const RECT &key, const char *label,
 	const bool l = b == mu2000::button::select_left, rr = b == mu2000::button::select_right;
 	const int kind = l ? 2 : rr ? 3 : (sub[0] == '+' ? 1 : 0);
 	if (m_key_sym[kind] && m_key_sym[kind]->ok()) {
+		// Whole pixels: GDI blitted this bitmap 1:1, and a fractional offset
+		// turns the GPU's bilinear filter into a blur on an 8 px picture.
 		const int S = m_key_sym_px;
-		m_key_sym[kind]->draw(dl, RECT{ cx - S / 2, cy - S / 2, cx + S / 2, cy + S / 2 });
+		const int x = int(std::lround(cx - S / 2.0)), y = int(std::lround(cy - S / 2.0));
+		m_key_sym[kind]->draw(dl, RECT{ x, y, x + S, y + S });
 		return;
 	}
 	// Fallback for when the picture is not there (no context, no texture)
@@ -1253,7 +1277,7 @@ void panel::paint_front(ImDrawList *dl, const snapshot &s, u64 pressed, double v
 		const bool down = ((pressed >> int(p.b)) & 1) != 0;
 		// 印刷まで入ったキーごとの絵があれば、それだけ貼る
 		if (const svg_art *face = m_lay.nav_face[i].pick(down, down)) {
-			face->draw(dc, sp->r);
+			face->draw(dl, sp->r);
 			continue;
 		}
 		if (const svg_art *pic = m_lay.nav_art.pick(down, down))
