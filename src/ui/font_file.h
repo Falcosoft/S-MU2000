@@ -153,12 +153,18 @@ static std::vector<unsigned char> cjk_gdi_bytes(const char *family, int weight)
 
 inline void cjk_offers(bool bold, std::vector<face_offer> &out)
 {
+	// A DC of its own, not a null one. The docs say the handle is ignored, but
+	// a null DC enumerates nothing here: every Japanese family on the machine
+	// comes back as an empty list, and the walk then ends at the embedded font.
+	HDC dc = CreateCompatibleDC(nullptr);
 	LOGFONTA filter = {};                // not LOGFONT: that is the wide one here
 	filter.lfCharSet = SHIFTJIS_CHARSET;
 	filter.lfWeight  = FW_DONTCARE;
 	std::vector<std::string> families;
-	EnumFontFamiliesExA(nullptr, &filter, cjk_collect_family,
+	EnumFontFamiliesExA(dc, &filter, cjk_collect_family,
 	                    reinterpret_cast<LPARAM>(&families), 0);
+	if (dc)
+		DeleteDC(dc);
 	// GDI hands the families back in name order, so put the ones we would
 	// rather have up front, keeping their own order among themselves and
 	// leaving the rest behind in the order GDI gave them.

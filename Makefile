@@ -189,17 +189,20 @@ endif
 # compiled zero files and wrote the panel art to ~/AppData/Local instead.
 .DEFAULT_GOAL := all
 
-# The pictures go in unconditionally; panel.txt does not, because that is the
-# one file here a person edits (doc/panel-editing.md) and overwriting it on
-# every install would throw that away. Delete it to get the shipped one back.
-# Phony because it produces no file of its own.
+# Neither the pictures nor panel.txt are overwritten. panel.txt is the one file
+# here a person edits (doc/panel-editing.md), and a panel.txt of yours may well
+# point at pictures of your own, so replacing the pictures while keeping the
+# panel.txt would leave the two describing different panels. Delete what you
+# want the shipped versions of. Phony because it produces no file of its own.
 .PHONY: install-panel-art
 install-panel-art:
 	@mkdir -p "$(PANEL_DATA_DIR)"
-	@cp -f art/real/*.png "$(PANEL_DATA_DIR)/"
-	@cp -n art/real/panel.txt "$(PANEL_DATA_DIR)/" 2>/dev/null || \
-		test -f "$(PANEL_DATA_DIR)/panel.txt" || \
-		cp -f art/real/panel.txt "$(PANEL_DATA_DIR)/"
+	@for f in art/real/*.png art/real/panel.txt; do \
+		test -e "$$f" || continue; \
+		cp -n "$$f" "$(PANEL_DATA_DIR)/" 2>/dev/null || \
+			test -e "$(PANEL_DATA_DIR)/$$(basename $$f)" || \
+			cp -f "$$f" "$(PANEL_DATA_DIR)/"; \
+	done
 	@echo "絵を置いておいた: $(PANEL_DATA_DIR)"
 
 SRCS := \

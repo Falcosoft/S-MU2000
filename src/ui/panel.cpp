@@ -739,12 +739,17 @@ void panel::draw_lcd_body(ImDrawList *dl, const snapshot &s, const lcd_geom &g) 
 	// 帯状の弧（中心 cx cy、半径 r0-r1、a0 度から a1 度）。端は半径の向きに切る
 	// An elliptical band, so it goes out as a polygon: ImGui's arcs are
 	// circular, and the LCD wants an ellipse (the fans, the pan arc, the needles)
+	//
+	// **Both of these are concave** -- a band and a ring are, by definition --
+	// so they have to go through the concave filler. AddConvexPolyFilled draws
+	// the convex hull, which fills the middle in and turns every arc and every
+	// ring into a solid blob.
 	std::vector<ImVec2> poly_pts;
 	auto poly = [&](std::initializer_list<pt> ps, COLORREF ink) {
 		poly_pts.clear();
 		for (const pt &p : ps)
 			poly_pts.emplace_back(float(p.x), float(p.y));
-		dl->AddConvexPolyFilled(poly_pts.data(), int(poly_pts.size()), im::col(ink));
+		dl->AddConcavePolyFilled(poly_pts.data(), int(poly_pts.size()), im::col(ink));
 	};
 	auto ring = [&](double cx, double cy, double r0, double r1, double a0, double a1,
 	                COLORREF ink) {
@@ -759,7 +764,7 @@ void panel::draw_lcd_body(ImDrawList *dl, const snapshot &s, const lcd_geom &g) 
 			const pt p = polar(cx, cy, r0, a0 + (a1 - a0) * i / n);
 			poly_pts.emplace_back(float(p.x), float(p.y));
 		}
-		dl->AddConvexPolyFilled(poly_pts.data(), int(poly_pts.size()), im::col(ink));
+		dl->AddConcavePolyFilled(poly_pts.data(), int(poly_pts.size()), im::col(ink));
 	};
 
 	auto ctl = [&](int col, int row) { return lcd_ctl(s, col, row); };

@@ -457,6 +457,470 @@ bool svg_art::load_text(const std::string &text)
 	return ok();
 }
 
+// ---- filling one shape ------------------------------------------------------
+//
+// The GDI build filled every subpath of a shape in a single PolyPolygon call
+// with ALTERNATE mode: a pixel is painted when an odd number of contours cover
+// it. ImGui has no multi-contour fill, so each painted region is triangulated
+// here instead: every loop nested at an even depth paints (a root covers once),
+// minus the loops it directly contains. Same rule, by construction.
+//
+// Everything below runs in the SVG's own units, in double precision, and the
+// screen transform happens once, at emission. Topology needs exact
+// coincidence -- the slit of a bridged hole must sit exactly on ear edges --
+// and rounded screen pixels cannot promise that at every window size.
+//
+// Hole-free loops go straight to AddConcavePolyFilled, which is exactly what
+// that helper is good at. Loops with holes are bridged and clipped below, by
+// hand: that helper must never see a bridged polygon, because with no ear to
+// clip it emits a fan from vertex zero instead of failing.
+
+struct fpt { double x, y; };
+
+struct floop {
+	std::vector<fpt> pts;
+	double area = 0;             // signed; y grows down, so > 0 is clockwise
+	int parent = -1;             // tightest containing loop, or -1
+	int depth = 0;               // nesting depth; even depths paint
+};
+
+// SVG units to screen pixels, applied once, at emission.
+struct fmap {
+	double ox, oy, k, cx, cy, cs, sn;
+	bool turn;
+	ImVec2 operator()(const fpt &q) const
+	{
+		double px = ox + q.x * k, py = oy + q.y * k;
+		if (turn) {
+			const double dx = px - cx, dy = py - cy;
+			px = cx + dx * cs - dy * sn;
+			py = cy + dx * sn + dy * cs;
+		}
+		return ImVec2(float(px), float(py));
+	}
+};
+
+static double floop_area(const std::vector<fpt> &p)
+{
+	double a = 0;
+	for (size_t i = 0; i < p.size(); i++) {
+		const fpt &u = p[i], &v = p[(i + 1) % p.size()];
+		a += u.x * v.y - v.x * u.y;
+	}
+	return a / 2;
+}
+
+static bool floop_contains(const std::vector<fpt> &p, fpt q)
+{
+	bool in = false;
+	for (size_t i = 0, j = p.size() - 1; i < p.size(); j = i++) {
+		const fpt &a = p[i], &b = p[j];
+		if ((a.y > q.y) != (b.y > q.y) &&
+		    q.x < (b.x - a.x) * (q.y - a.y) / (b.y - a.y) + a.x)
+			in = !in;
+	}
+	return in;
+}
+
+static double floop_cross(const fpt &a, const fpt &b, const fpt &c)
+{
+	return (b.x - a.x) * (c.y - a.y) - (b.y - a.y) * (c.x - a.x);
+}
+
+// Strictly inside: points exactly on an edge do not count. The slit of a
+// bridged polygon puts vertices exactly on ear edges, and those must not block
+// the ear.
+static bool floop_in_triangle(const fpt &a, const fpt &b, const fpt &c, const fpt &q)
+{
+	const double d1 = floop_cross(a, b, q);
+	const double d2 = floop_cross(b, c, q);
+	const double d3 = floop_cross(c, a, q);
+	return (d1 > 0 && d2 > 0 && d3 > 0) || (d1 < 0 && d2 < 0 && d3 < 0);
+}
+
+static bool floop_seg_cross(fpt a, fpt b, fpt c, fpt d)
+{
+	const double d1 = floop_cross(a, b, c), d2 = floop_cross(a, b, d);
+	const double d3 = floop_cross(c, d, a), d4 = floop_cross(c, d, b);
+	if (((d1 > 0 && d2 < 0) || (d1 < 0 && d2 > 0)) &&
+	    ((d3 > 0 && d4 < 0) || (d3 < 0 && d4 > 0)))
+		return true;
+	return false;
+}
+
+// Splice hole h into outline o through a zero-width slit, so the two become
+// one polygon. others holds every sibling hole, spliced or not: the slit must
+// meet none of them, or two slits would cut each other. All four axis
+// directions are tried -- a hole boxed in on one side usually escapes on
+// another -- and the shortest clean slit wins. Returns false when no clean
+// slit exists; the caller then leaves that hole painted over, which is
+// visible but bounded -- never a spike.
+static bool floop_bridge(std::vector<fpt> &o, std::vector<fpt> h,
+                         const std::vector<const std::vector<fpt> *> &others)
+{
+	if (o.size() < 3 || h.size() < 3)
+		return false;
+	if (floop_area(h) * floop_area(o) > 0)
+		std::reverse(h.begin(), h.end());
+	struct cand { fpt M, B; size_t m, edge; double len; };
+	std::vector<cand> cands;
+	// (dx, dy): east, west, south, north. y grows downwards; the order is only
+	// a tiebreak, the shortest slit wins below.
+	const int dirs[4][2] = { { 1, 0 }, { -1, 0 }, { 0, 1 }, { 0, -1 } };
+	for (const auto &dd : dirs) {
+		const double dx = dd[0], dy = dd[1];
+		size_t m = 0;                         // the hole's extreme vertex
+		for (size_t i = 1; i < h.size(); i++) {
+			const double du = (h[i].x - h[m].x) * dx + (h[i].y - h[m].y) * dy;
+			if (du > 0 || (du == 0 && (h[i].y > h[m].y || (h[i].y == h[m].y && h[i].x > h[m].x))))
+				m = i;
+		}
+		const fpt M = h[m];
+		for (size_t i = 0; i < o.size(); i++) {
+			const fpt &a = o[i], &b = o[(i + 1) % o.size()];
+			// The edge must straddle the ray; the ray runs from M along (dx, dy).
+			const double sa = (a.x - M.x) * dy - (a.y - M.y) * dx;
+			const double sb = (b.x - M.x) * dy - (b.y - M.y) * dx;
+			if ((sa > 0) == (sb > 0) || sa == sb)
+				continue;
+			const double t = sa / (sa - sb);
+			const double along = (a.x - M.x) * dx + (a.y - M.y) * dy +
+			                     t * ((b.x - a.x) * dx + (b.y - a.y) * dy);
+			if (along <= 1e-9)
+				continue;                 // behind M, or M itself
+			const fpt B{ M.x + along * dx, M.y + along * dy };
+			bool clean = true;
+			for (size_t k = 0; k < o.size() && clean; k++) {
+				if (k == i)
+					continue;             // the slit lands on this edge
+				const fpt &c = o[k], &d = o[(k + 1) % o.size()];
+				if ((c.x == M.x && c.y == M.y) || (d.x == M.x && d.y == M.y) ||
+				    (c.x == B.x && c.y == B.y) || (d.x == B.x && d.y == B.y))
+					continue;             // meets the slit at its ends
+				if (floop_seg_cross(M, B, c, d))
+					clean = false;
+			}
+			for (size_t k = 0; clean && k < h.size(); k++) {
+				const fpt &c = h[k], &d = h[(k + 1) % h.size()];
+				if ((c.x == M.x && c.y == M.y) || (d.x == M.x && d.y == M.y))
+					continue;             // the slit starts at M
+				if (floop_seg_cross(M, B, c, d))
+					clean = false;
+			}
+			for (const std::vector<fpt> *other : others) {
+				if (!clean)
+					break;
+				for (size_t k = 0; clean && k < other->size(); k++) {
+					const fpt &c = (*other)[k], &d = (*other)[(k + 1) % other->size()];
+					if ((c.x == M.x && c.y == M.y) || (d.x == M.x && d.y == M.y) ||
+					    (c.x == B.x && c.y == B.y) || (d.x == B.x && d.y == B.y))
+						continue;
+					if (floop_seg_cross(M, B, c, d))
+						clean = false;
+				}
+			}
+			if (clean)
+				cands.push_back({ M, B, m, i, along });
+		}
+	}
+	if (cands.empty())
+		return false;
+	const cand *best = &cands[0];
+	for (const cand &c : cands)
+		if (c.len < best->len)
+			best = &c;
+	std::vector<fpt> out;
+	out.reserve(o.size() + h.size() + 2);
+	for (size_t i = 0; i <= best->edge; i++)
+		out.push_back(o[i]);
+	out.push_back(best->B);
+	out.push_back(best->M);
+	for (size_t k = 1; k < h.size(); k++)
+		out.push_back(h[(best->m + k) % h.size()]);
+	out.push_back(best->M);
+	out.push_back(best->B);
+	for (size_t i = best->edge + 1; i < o.size(); i++)
+		out.push_back(o[i]);
+	o.swap(out);
+	return true;
+}
+
+// Ear-clip a simple polygon; appends index triples into tris. Collapses
+// zero-area ears without emitting, which is what consumes the slit of a
+// bridged polygon. Returns false when no progress is possible; the caller
+// falls back to painting the outline whole.
+static bool floop_earclip(const std::vector<fpt> &p, std::vector<unsigned> &tris)
+{
+	const size_t n = p.size();
+	if (n < 3)
+		return false;
+	const double s = floop_area(p) >= 0 ? 1.0 : -1.0;
+	std::vector<unsigned> live(n);
+	for (size_t i = 0; i < n; i++)
+		live[i] = unsigned(i);
+	while (live.size() > 3) {
+		bool moved = false;
+		for (size_t k = 0; k < live.size(); k++) {
+			const size_t i0 = live[(k + live.size() - 1) % live.size()];
+			const size_t i1 = live[k];
+			const size_t i2 = live[(k + 1) % live.size()];
+			const double cross = floop_cross(p[i0], p[i1], p[i2]);
+			if (cross == 0) {
+				live.erase(live.begin() + k);   // collinear: collapse, no triangle
+				moved = true;
+				break;
+			}
+			if (cross * s <= 0)
+				continue;                       // reflex, not an ear tip
+			bool blocked = false;
+			for (size_t j : live) {
+				if (j == i0 || j == i1 || j == i2)
+					continue;
+				if (floop_in_triangle(p[i0], p[i1], p[i2], p[j])) {
+					blocked = true;
+					break;
+				}
+			}
+			if (blocked)
+				continue;
+			tris.push_back(i0);
+			tris.push_back(i1);
+			tris.push_back(i2);
+			live.erase(live.begin() + k);
+			moved = true;
+			break;
+		}
+		if (!moved)
+			return false;
+	}
+	tris.push_back(live[0]);
+	tris.push_back(live[1]);
+	tris.push_back(live[2]);
+	return true;
+}
+
+// Emit one triangulated region with ImGui's own antialiased fringe. boundary
+// holds the loops the region is bounded by -- the outline, then each bridged
+// hole -- all wound so the paint sits on the same side, which is what makes
+// one fringe routine serve both. tris indexes into verts; everything arrives
+// in SVG units and lands on pixels here, for the first and only time.
+static void floop_emit(ImDrawList *dl, const fmap &map,
+                       const std::vector<fpt> &verts,
+                       const std::vector<unsigned> &tris,
+                       const std::vector<std::vector<fpt>> &boundary, ImU32 col)
+{
+	if (tris.empty() || (col & IM_COL32_A_MASK) == 0)
+		return;
+	std::vector<ImVec2> xy;
+	xy.reserve(verts.size());
+	for (const fpt &v : verts)
+		xy.push_back(map(v));
+	std::vector<std::vector<ImVec2>> edge;
+	edge.reserve(boundary.size());
+	for (const auto &loop : boundary) {
+		edge.emplace_back();
+		for (const fpt &v : loop)
+			edge.back().push_back(map(v));
+	}
+	const ImVec2 uv = dl->_Data->TexUvWhitePixel;
+	if ((dl->Flags & ImDrawListFlags_AntiAliasedFill) == 0) {
+		const unsigned base = dl->_VtxCurrentIdx;
+		dl->PrimReserve(int(tris.size()), int(xy.size()));
+		for (const ImVec2 &v : xy) {
+			dl->_VtxWritePtr[0].pos = v;
+			dl->_VtxWritePtr[0].uv = uv;
+			dl->_VtxWritePtr[0].col = col;
+			dl->_VtxWritePtr++;
+		}
+		for (unsigned t : tris) {
+			dl->_IdxWritePtr[0] = ImDrawIdx(base + t);
+			dl->_IdxWritePtr++;
+		}
+		dl->_VtxCurrentIdx = ImDrawIdx(base + xy.size());
+		return;
+	}
+	const float AA_SIZE = dl->_FringeScale;
+	const ImU32 col_trans = col & ~IM_COL32_A_MASK;
+	size_t fringe_pts = 0;
+	for (const auto &loop : edge)
+		fringe_pts += loop.size();
+	const unsigned base = dl->_VtxCurrentIdx;
+	dl->PrimReserve(int(tris.size()) + int(fringe_pts) * 6,
+	                int(xy.size()) + int(fringe_pts) * 2);
+	for (const ImVec2 &v : xy) {
+		dl->_VtxWritePtr[0].pos = v;
+		dl->_VtxWritePtr[0].uv = uv;
+		dl->_VtxWritePtr[0].col = col;
+		dl->_VtxWritePtr++;
+	}
+	for (unsigned t : tris) {
+		dl->_IdxWritePtr[0] = ImDrawIdx(base + t);
+		dl->_IdxWritePtr++;
+	}
+	unsigned fringe = base + unsigned(xy.size());
+	for (const auto &loop : edge) {
+		const size_t m = loop.size();
+		if (m < 2)
+			continue;
+		std::vector<ImVec2> normals(m);
+		for (size_t i = 0; i < m; i++) {
+			const ImVec2 &p0 = loop[(i + m - 1) % m];
+			const ImVec2 &p1 = loop[i];
+			float dx = p1.x - p0.x, dy = p1.y - p0.y;
+			const float len = std::hypot(dx, dy);
+			if (len > 0) {
+				dx /= len;
+				dy /= len;
+			}
+			normals[i] = ImVec2(dy, -dx);
+		}
+		for (size_t i1 = 0; i1 < m; i1++) {
+			const size_t i0 = (i1 + m - 1) % m;
+			float dmx = (normals[i0].x + normals[i1].x) * 0.5f;
+			float dmy = (normals[i0].y + normals[i1].y) * 0.5f;
+			float d2 = dmx * dmx + dmy * dmy;
+			if (d2 < 0.25f) {
+				dmx = 0.0f;
+				dmy = 1.0f;
+			} else {
+				const float d = std::sqrt(d2);
+				dmx /= d;
+				dmy /= d;
+			}
+			dmx *= AA_SIZE * 0.5f;
+			dmy *= AA_SIZE * 0.5f;
+			const ImVec2 &q = loop[i1];
+			dl->_VtxWritePtr[0].pos = ImVec2(q.x - dmx, q.y - dmy);
+			dl->_VtxWritePtr[0].uv = uv;
+			dl->_VtxWritePtr[0].col = col;
+			dl->_VtxWritePtr++;
+			dl->_VtxWritePtr[0].pos = ImVec2(q.x + dmx, q.y + dmy);
+			dl->_VtxWritePtr[0].uv = uv;
+			dl->_VtxWritePtr[0].col = col_trans;
+			dl->_VtxWritePtr++;
+			const unsigned inner1 = fringe + unsigned(i1) * 2;
+			const unsigned inner0 = fringe + unsigned(i0) * 2;
+			dl->_IdxWritePtr[0] = ImDrawIdx(inner1);
+			dl->_IdxWritePtr[1] = ImDrawIdx(inner0);
+			dl->_IdxWritePtr[2] = ImDrawIdx(inner0 + 1);
+			dl->_IdxWritePtr[3] = ImDrawIdx(inner0 + 1);
+			dl->_IdxWritePtr[4] = ImDrawIdx(inner1 + 1);
+			dl->_IdxWritePtr[5] = ImDrawIdx(inner1);
+			dl->_IdxWritePtr += 6;
+		}
+		fringe += unsigned(m) * 2;
+	}
+	dl->_VtxCurrentIdx = ImDrawIdx(fringe);
+}
+
+// Paint one filled shape under the even-odd rule. tol is one square pixel in
+// SVG units: the triangulation check below refuses anything further out.
+static void floop_fill(ImDrawList *dl, const fmap &map, std::vector<floop> &loops,
+                       ImU32 col, double tol)
+{
+	if (loops.empty() || (col & IM_COL32_A_MASK) == 0)
+		return;
+	if (loops.size() == 1) {                   // no nesting to work out
+		const auto &p = loops[0].pts;
+		if (p.size() < 3)
+			return;
+		std::vector<ImVec2> xy;
+		for (const fpt &v : p)
+			xy.push_back(map(v));
+		dl->AddConcavePolyFilled(xy.data(), int(xy.size()), col);
+		return;
+	}
+	// Nesting, tightest container first: bounding boxes reject nearly every
+	// pair before the crossing test runs.
+	std::vector<double> box;
+	box.reserve(loops.size() * 4);
+	for (const floop &l : loops) {
+		double b[4] = { 1e30, 1e30, -1e30, -1e30 };
+		for (const fpt &q : l.pts) {
+			b[0] = std::min(b[0], q.x);
+			b[1] = std::min(b[1], q.y);
+			b[2] = std::max(b[2], q.x);
+			b[3] = std::max(b[3], q.y);
+		}
+		box.insert(box.end(), b, b + 4);
+	}
+	for (size_t i = 0; i < loops.size(); i++) {
+		const fpt probe = loops[i].pts[0];
+		for (size_t j = 0; j < loops.size(); j++) {
+			if (i == j)
+				continue;
+			if (probe.x < box[j * 4] || probe.x > box[j * 4 + 2] ||
+			    probe.y < box[j * 4 + 1] || probe.y > box[j * 4 + 3])
+				continue;
+			if (!floop_contains(loops[j].pts, probe))
+				continue;
+			if (loops[i].parent < 0 ||
+			    std::fabs(loops[j].area) < std::fabs(loops[loops[i].parent].area))
+				loops[i].parent = int(j);
+		}
+	}
+	for (size_t i = 0; i < loops.size(); i++) {
+		loops[i].depth = 0;
+		for (int p = loops[i].parent; p >= 0; p = loops[p].parent)
+			loops[i].depth++;
+	}
+	for (size_t i = 0; i < loops.size(); i++) {
+		// Even-odd: a root covers once, so it paints; each level of nesting
+		// flips it. Depth counts containers, so roots sit at zero and paint.
+		if (loops[i].depth % 2 != 0)
+			continue;                           // odd depth stays unpainted
+		// Clockwise on screen, the winding ImGui fringes for.
+		if (loops[i].area < 0)
+			std::reverse(loops[i].pts.begin(), loops[i].pts.end());
+		std::vector<fpt> outline = loops[i].pts;
+		std::vector<std::vector<fpt>> boundary;
+		boundary.push_back(loops[i].pts);
+		// The holes, up front: each slit is validated against the outline and
+		// every hole, spliced or not, so one slit can never cut another.
+		std::vector<size_t> holes;
+		for (size_t j = 0; j < loops.size(); j++)
+			if (loops[j].parent == int(i))
+				holes.push_back(j);
+		std::vector<bool> cut(holes.size(), false);
+		for (size_t h = 0; h < holes.size(); h++) {
+			std::vector<fpt> hole = loops[holes[h]].pts;
+			if (floop_area(hole) > 0)
+				std::reverse(hole.begin(), hole.end());
+			std::vector<const std::vector<fpt> *> others;
+			for (size_t g = 0; g < holes.size(); g++)
+				if (g != h)
+					others.push_back(&loops[holes[g]].pts);
+			if (!floop_bridge(outline, hole, others))
+				continue;                       // no clean slit: this hole stays painted over
+			boundary.push_back(std::move(hole));
+			cut[h] = true;
+		}
+		std::vector<ImVec2> flat0;
+		flat0.reserve(loops[i].pts.size());
+		for (const fpt &v : loops[i].pts)
+			flat0.push_back(map(v));
+		std::vector<unsigned> tris;
+		tris.reserve(outline.size() > 2 ? (outline.size() - 2) * 3 : 0);
+		const bool clipped = floop_earclip(outline, tris);
+		// The triangulation must account for the outline minus the holes that
+		// were cut, and nothing else. A spike would add area, a swallowed ear
+		// would lose it; either way this refuses the triangles rather than
+		// drawing them. Holes with no clean slit stay painted over: visible,
+		// but bounded -- never a spike.
+		double want = std::fabs(floop_area(loops[i].pts));
+		for (size_t h = 0; h < holes.size(); h++)
+			if (cut[h])
+				want -= std::fabs(floop_area(loops[holes[h]].pts));
+		double got = 0;
+		for (size_t t = 0; t + 2 < tris.size(); t += 3)
+			got += std::fabs(floop_area({ outline[tris[t]], outline[tris[t + 1]], outline[tris[t + 2]] }));
+		if (!clipped || (want > 0 && std::fabs(got - want) > 0.02 * want + tol))
+			dl->AddConcavePolyFilled(flat0.data(), int(flat0.size()), col);
+		else
+			floop_emit(dl, map, outline, tris, boundary, col);
+	}
+}
+
 void svg_art::draw(ImDrawList *dl, const RECT &dst, double deg) const
 {
 	if (!m_mips.empty()) {
@@ -483,21 +947,65 @@ void svg_art::draw(ImDrawList *dl, const RECT &dst, double deg) const
 
 	for (const shape &sh : m_shapes) {
 		if (sh.has_fill) {
+			// The whole path at once, so the even-odd rule in floop_fill sees
+			// every contour together: filling them one by one would lose the
+			// holes, which is how the jacks came out as black discs. The loops
+			// stay in SVG units here; the screen transform happens once, at
+			// emission, so topology never sees a rounded pixel.
+			const fmap map{ ox, oy, k, cx, cy, cs, sn, turn };
+			const double step = 0.5 / k;         // half a screen pixel, in SVG units
+			std::vector<floop> loops;
 			for (const auto &sub : sh.subs) {
-				pts.clear();
+				floop l;
 				for (const pt &q : sub) {
-					double px = ox + q.x * k, py = oy + q.y * k;
-					if (turn) {
-						const double dx = px - cx, dy = py - cy;
-						px = cx + dx * cs - dy * sn;
-						py = cy + dx * sn + dy * cs;
-					}
-					pts.emplace_back(float(px), float(py));
+					if (l.pts.empty() || l.pts.back().x != q.x || l.pts.back().y != q.y)
+						l.pts.push_back({ q.x, q.y });
 				}
-				if (pts.size() < 3)
-					continue;
-				dl->AddConvexPolyFilled(pts.data(), int(pts.size()), im::col(sh.fill));
+				// A flattened curve ends where it started, up to float dust: the
+				// last point is the moveto start recomputed through four
+				// Beziers. Leave it and the fringe normalizes a 1e-12 edge into
+				// a nick at the seam -- three o'clock on every circle. GDI
+				// never saw it: integer pixels collapse the edge to nothing.
+				if (l.pts.size() > 1) {
+					const fpt &a = l.pts.front(), &b = l.pts.back();
+					const double dx = b.x - a.x, dy = b.y - a.y;
+					if (dx * dx + dy * dy < 1e-18)
+						l.pts.pop_back();
+				}
+				// Curves arrive flattened far past the pixel grid: a pin is a
+				// hundred points for five pixels. The triangulator chokes on
+				// vertices it cannot tell apart, so keep a vertex only when it
+				// moves half a pixel. Anything this erases was invisible.
+				if (l.pts.size() > 16) {
+					std::vector<fpt> thin;
+					thin.reserve(l.pts.size());
+					thin.push_back(l.pts.front());
+					for (size_t t = 1; t < l.pts.size(); t++) {
+						const fpt &a = thin.back(), &b = l.pts[t];
+						const double dx = b.x - a.x, dy = b.y - a.y;
+						if (dx * dx + dy * dy >= step * step)
+							thin.push_back(b);
+					}
+					// The seam too: a last point a hair from the first makes a
+					// micro-edge whose fringe normal points anywhere -- the
+					// nick at three o'clock, where every circle starts.
+					while (thin.size() > 3) {
+						const fpt &a = thin.front(), &b = thin.back();
+						const double dx = b.x - a.x, dy = b.y - a.y;
+						if (dx * dx + dy * dy >= step * step)
+							break;
+						thin.pop_back();
+					}
+					if (thin.size() >= 3)
+						l.pts.swap(thin);
+				}
+				if (l.pts.size() >= 3) {
+					l.area = floop_area(l.pts);
+					if (l.area != 0)
+						loops.push_back(std::move(l));
+				}
 			}
+			floop_fill(dl, map, loops, im::col(sh.fill), 1.0 / (k * k));
 		}
 		if (sh.has_stroke) {
 			const float w = float(std::max(1, int(sh.stroke_w * k + 0.5)));
@@ -516,7 +1024,18 @@ void svg_art::draw(ImDrawList *dl, const RECT &dst, double deg) const
 					continue;
 				const ImU32 c = im::col(sh.stroke);
 				if (sh.closed[i] && pts.size() >= 2) {
-					pts.push_back(pts.front());
+					// Closed joins the last point back to the first itself; also
+					// appending the first point makes a zero-length edge whose
+					// join spikes -- the nick at three o'clock, where every
+					// circle starts. GDI drew the closing segment by hand from
+					// last to first, which has the same shape without one.
+					while (pts.size() > 1) {
+						const ImVec2 &a = pts.back(), &b = pts.front();
+						const double dx = double(a.x) - b.x, dy = double(a.y) - b.y;
+						if (dx * dx + dy * dy > 1e-12)
+							break;
+						pts.pop_back();
+					}
 					dl->AddPolyline(pts.data(), int(pts.size()), c, ImDrawFlags_Closed, w);
 				} else {
 					dl->AddPolyline(pts.data(), int(pts.size()), c, 0, w);
