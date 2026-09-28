@@ -504,13 +504,16 @@ void drum_write(bridge &br, int set, int key, int idx, int value, bool drag)
 namespace {
 out_hooks g_out;
 bool g_out_set = false;
-enum class out_kind { none, param, drum, drum_row, program, group, live };
+enum class out_kind { none, param, drum, drum_row, program, group, live, raw };
 struct out_target {
 	out_kind k = out_kind::none;
 	const xg::param *p = nullptr;
 	int part = 0, set = 0, key = 0, idx = 0;
 	int slot = -1, value = 0;
 	bool bend = false;
+	u32 addr = 0;
+	int size = 0;
+	const char *label = nullptr;
 	std::vector<const char *> keys;
 };
 out_target g_hover;
@@ -551,6 +554,15 @@ void out_hover_drum_row(int set, int key)
 	g_hover.k = out_kind::drum_row;
 	g_hover.set = set;
 	g_hover.key = key;
+}
+
+void out_hover_raw(u32 addr, int size, const char *label)
+{
+	g_hover = out_target{};
+	g_hover.k = out_kind::raw;
+	g_hover.addr = addr;
+	g_hover.size = size;
+	g_hover.label = label;
 }
 
 void out_hover_program(int part)
@@ -649,6 +661,16 @@ void out_end_frame(xg::model &m, const xg_snapshot &ram, bridge &br)
 		char buf[96];
 		std::snprintf(buf, sizeof(buf), "DRUMS%d %s %s = %s", g_hover.set + 1, drum_key_text(g_hover.key).c_str(), d.head,
 		              drum_value_text(g_hover.idx, v).c_str());
+		what = buf;
+		break;
+	}
+	case out_kind::raw: {
+		int v = 0;
+		if (!m.get_raw(g_hover.addr, g_hover.size, v))
+			return;
+		msgs.push_back(m.set_raw(g_hover.addr, g_hover.size, v));
+		char buf[64];
+		std::snprintf(buf, sizeof(buf), "%s = %d", g_hover.label ? g_hover.label : "?", v);
 		what = buf;
 		break;
 	}

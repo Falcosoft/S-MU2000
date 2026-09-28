@@ -209,6 +209,15 @@ void mod_matrix(int part, xg::model &m, bridge &br, float w, float h)
 		const ImVec2 ls = ImGui::CalcTextSize(label.c_str());
 		dl->AddText(ImVec2(org.x + fs * 0.3f, y + (ch - gap - ls.y) * 0.5f), ImGui::GetColorU32(ImGuiCol_Text), label.c_str());
 		if (row_hover) {
+			// Ctrl＋右クリック: AC1・AC2 の見出しは CC の番号、ほかの見出しはその行の 6 マス
+			if (r >= 4) {
+				out_hover_param(P((std::string("part.") + SRCS[r].key + "_cc").c_str()), part);
+			} else {
+				std::vector<const char *> row_keys;
+				for (int c = 0; c < 6; c++)
+					row_keys.push_back(P((std::string("part.") + SRCS[r].key + "_" + DSTS[c].key).c_str()).key);
+				out_hover_group(row_keys, part);
+			}
 			if (r >= 4)
 				hint(UI_TEXT(mx_hint_cc_fmt, "%s\n%s. The 6 cells in this row are what this source moves. Wheel over a header changes the CC number"),
 				     official_name((std::string("part.") + SRCS[r].key + "_cc").c_str()).c_str(), SRCS[r].about);
@@ -273,6 +282,8 @@ void mod_matrix(int part, xg::model &m, bridge &br, float w, float h)
 			dl->AddText(ImVec2((a.x + b.x - ts.x) * 0.5f, (a.y + b.y - ts.y) * 0.5f),
 			            ImGui::GetColorU32(known && ((bip && v != p.center) || (!bip && v != p.min)) ? ImGuiCol_Text : ImGuiCol_TextDisabled),
 			            text.c_str());
+			if (hov && known)
+				out_hover_param(p, part);          // Ctrl＋右クリックでこのマスを送る
 			if (hov || act) {
 				const char *help = help_for(key.c_str());
 				char to[64];
@@ -656,11 +667,15 @@ void fx_cell(int slot, bool part_only, int part, xg::model &m, bridge &br, float
 		if (part_sw.first)
 			br.send(m.set(P("variation.part"), 0, var_part == part ? 127 : part));
 		if (part_sw.second)
+			out_hover_param(P("variation.part"), 0);
+		if (part_sw.second)
 			hint(UI_TEXT(ps_var_part_hint, "%s\nOn puts the variation on this part (off: on no part). Only applies in insertion (INS) connection; with both INS and PART on, type and parameters are editable here"),
 			     official_name("variation.part").c_str());
 		const auto ins_sw = toggle("##vins", "INS", !var_sys, true);
 		if (ins_sw.first)
 			br.send(m.set(P("variation.connect"), 0, var_sys ? 0 : 1));
+		if (ins_sw.second)
+			out_hover_param(P("variation.connect"), 0);
 		if (ins_sw.second)
 			hint(UI_TEXT(ps_var_ins_hint, "%s\nOn: insertion connection (whole sound of the played part passes through, splitting into dry plus reverb/chorus sends); off: system connection (collects all parts' Var Send, mixes at return). Only one variation exists, shared with other parts. While INS and PART are not both on, only this part's Send is editable here"),
 			     official_name("variation.connect").c_str());
@@ -707,6 +722,8 @@ void fx_cell(int slot, bool part_only, int part, xg::model &m, bridge &br, float
 		}
 		ImGui::EndCombo();
 	}
+	if (ImGui::IsItemHovered(ImGuiHoveredFlags_AllowWhenDisabled))
+		out_hover_param(ptype, 0);               // Ctrl＋右クリックで種類を送る
 	if (ImGui::IsItemHovered()) {
 		const char *th = type >= 0 ? fx_type_help(msb, type & 0x7f) : nullptr;
 		hint("%s  %s\n%s", official_name((prefix + ".type").c_str()).c_str(), name.c_str(), th ? th : UI_TEXT(ps_fx_type_fallback, "Effect type"));
@@ -738,7 +755,8 @@ void fx_cell(int slot, bool part_only, int part, xg::model &m, bridge &br, float
 		ImGui::EndDisabled();
 		if (idle)
 			ImGui::PopStyleColor(3);
-		if (ImGui::IsItemHovered() || ImGui::IsItemActive())
+		if (ImGui::IsItemHovered(ImGuiHoveredFlags_AllowWhenDisabled) && known)
+			out_hover_param(ps, part);
 		if (ImGui::IsItemHovered() || ImGui::IsItemActive())
 			hint(idle ? UI_TEXT(ps_var_send_idle_fmt, "%s  %d (ineffective)\nVariation is insertion-connected, so part sends do nothing. Values stay movable; switching back to system connection (INS off) sends at this value")
 			              : UI_TEXT(ps_var_send_hint, "%s  %d\nThis part's send to variation (works in system connection). Drag to change"), official_name("part.variation_send").c_str(), sv);
@@ -799,6 +817,8 @@ void fx_cell(int slot, bool part_only, int part, xg::model &m, bridge &br, float
 			const std::string text = known ? xg::format(*it.mp, v) : std::string("--");
 			if (fx_editor::knob(id, v, it.mp->min, it.mp->max, ksize, it.label, text.c_str(), false, it.lock) && known)
 				drag_send(br, m.set(*it.mp, pp, v));
+			if (ImGui::IsItemHovered(ImGuiHoveredFlags_AllowWhenDisabled) && known)
+				out_hover_param(*it.mp, pp);          // Ctrl＋右クリックで送る
 			if (it.lock && ImGui::IsItemHovered(ImGuiHoveredFlags_AllowWhenDisabled))
 				hint(UI_TEXT(ps_fx_viewonly_fmt, "%s  %s\nNot this part's insertion, so view-only here (turn on INS and PART above to edit)"),
 				     official_name(it.mp->key).c_str(), text.c_str());
@@ -817,6 +837,8 @@ void fx_cell(int slot, bool part_only, int part, xg::model &m, bridge &br, float
 			const std::string text = known ? fx_value_text(*it.fp, v) : std::string("--");
 			if (fx_editor::knob(id, v, it.fp->lo, it.fp->hi, ksize, it.fp->label, text.c_str(), false, it.lock) && known)
 				drag_send(br, m.set_raw(addr, size, v));
+			if (ImGui::IsItemHovered(ImGuiHoveredFlags_AllowWhenDisabled) && known)
+				out_hover_raw(addr, size, it.fp->label);   // Ctrl＋右クリックで送る
 			if (ImGui::IsItemHovered(ImGuiHoveredFlags_AllowWhenDisabled) || ImGui::IsItemActive())
 				focus_fp = it.fp;
 			if (it.lock && ImGui::IsItemHovered(ImGuiHoveredFlags_AllowWhenDisabled))
