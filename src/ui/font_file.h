@@ -27,10 +27,14 @@
 // bytes. The walk below stops at the first face it accepts, so nothing is read
 // until it is actually being tried: enumerating the Japanese families on
 // Windows turns up twenty of them.
+struct face_bytes {
+	std::vector<unsigned char> data;
+	int                        face = 0;   // index inside a TTC; 0 for a lone font
+};
+
 struct face_offer {
-	std::string                                  path;
-	std::vector<unsigned char>                   bytes;
-	std::function<std::vector<unsigned char>()> fetch;
+	std::string                          path;
+	std::function<face_bytes()>          fetch;
 };
 
 // The families, most wanted first. macOS ships the first five on every release
@@ -75,8 +79,8 @@ static const char *const cjk_families[] = {
 
 // The families on this machine that can draw Shift-JIS -- EnumFontFamiliesEx
 // with lfCharSet, the parameter that exists for exactly this -- and then the
-// file behind a request for one of them, which is GetFontData with a zero table
-// tag (the whole file, TTC included).
+// file behind a request for one of them, which is GetFontData with the 'ttcf'
+// tag (the whole collection, every face in it).
 //
 // **lfCharSet is SHIFTJIS_CHARSET and not DEFAULT_CHARSET, and that is the
 // whole trick.** With DEFAULT_CHARSET, GDI substitutes a fallback face *per
@@ -87,8 +91,6 @@ static const char *const cjk_families[] = {
 // what puts a real Japanese face inside the font object for GetFontData to hand
 // back. The rest of the request only has to match between the two weights, so
 // that GDI maps both to the same family.
-//
-// Not yet run on Windows.
 
 static const char *const cjk_wanted_families[] = {
 	// what a Japanese Windows install has, best first
@@ -113,42 +115,147 @@ static int CALLBACK cjk_collect_family(const LOGFONTA *lf, const TEXTMETRICA *,
 	return 1;
 }
 
-// The whole file behind one GDI request. GetFontData reads out of the font
-// *selected into a DC*, so it wants a DC of its own rather than the font
-// object, and the mapping-only request needs no window to draw into.
-static std::vector<unsigned char> cjk_gdi_bytes(const char *family, int weight)
+// Font files are big-endian throughout.
+static unsigned cjk_tt16(const unsigned char *p)
+{
+	return (unsigned(p[0]) << 8) | p[1];
+}
+
+static unsigned cjk_tt32(const unsigned char *p)
+{
+	return (unsigned(p[0]) << 24) | (unsigned(p[1]) << 16) |
+	       (unsigned(p[2]) << 8) | p[3];
+}
+
+// usWeightClass of the face starting at byte `off`, or -1 when it has no OS/2
+// table to ask. 100 is thin, 400 regular, 700 bold, 900 black.
+static int cjk_face_weight_at(const unsigned char *d, size_t n, size_t off)
+{
+	if (off + 12 > n)
+		return -1;
+	const unsigned tables = cjk_tt16(d + off + 4);
+	for (unsigned i = 0; i < tables; i++) {
+		const size_t rec = off + 12 + size_t(i) * 16;
+		if (rec + 16 > n)
+			return -1;
+		if (cjk_tt32(d + rec) != 0x4F532F32u)   // 'OS/2'
+			continue;
+		const size_t at = cjk_tt32(d + rec + 8);
+		if (at + 6 > n)
+			return -1;
+		return int(cjk_tt16(d + at + 4));
+	}
+	return -1;
+}
+
+// Byte offsets of every face in d: a collection lists them in its header, a
+// lone font is one face at zero. Returns how many, or 0 when d is not a font.
+static size_t cjk_face_offsets(const unsigned char *d, size_t n,
+                               size_t *offs, size_t cap)
+{
+	if (n < 12 || cap == 0)
+		return 0;
+	if (cjk_tt32(d) != 0x74746366u) {           // not 'ttcf': one face
+		offs[0] = 0;
+		return 1;
+	}
+	if (n < 16)
+		return 0;
+	const unsigned count = cjk_tt32(d + 8);
+	if (count == 0 || count > cap || 12 + size_t(count) * 4 > n)
+		return 0;
+	for (unsigned i = 0; i < count; i++) {
+		const size_t off = cjk_tt32(d + 12 + size_t(i) * 4);
+		if (off + 12 > n)
+			return 0;
+		offs[i] = off;
+	}
+	return count;
+}
+
+// One GetFontData call, both spellings. The size query with a null buffer is
+// spelled the same on both toolchains, which is why only the data call below
+// needs the branch.
+static bool cjk_get_font_bytes(HDC dc, DWORD tag, std::vector<unsigned char> &data)
+{
+	const DWORD size = GetFontData(dc, tag, 0, nullptr, 0);
+	if (!size || size == DWORD(GDI_ERROR))
+		return false;
+	data.resize(size);
+	// The two toolchains disagree here and getting it wrong is a
+	// runtime memory error rather than a compile error: the SDK says
+	// LPDWORD, MinGW's wingdi.h says DWORD. Each is therefore called
+	// the way its own header declares it, and the two must not be
+	// "tidied" into one.
+#if defined(__MINGW32__)
+	const bool ok = GetFontData(dc, tag, 0, data.data(), DWORD(data.size())) != GDI_ERROR;
+#else
+	DWORD want = DWORD(data.size());
+	const bool ok = GetFontData(dc, tag, 0, data.data(), &want) != GDI_ERROR;
+	if (ok)
+		data.resize(want);
+#endif
+	if (!ok)
+		data.clear();
+	return ok;
+}
+
+// The whole collection behind one GDI request, and which face of it GDI mapped
+// to. GetFontData with a zero tag hands back a single face of a TTC, which is
+// what crashed stb_truetype on Yu Gothic UI: a face's tables point outside
+// themselves. The 'ttcf' tag hands over the whole collection, and the face is
+// named by ImFontConfig::FontNo on the way into the atlas.
+//
+// Nothing in GDI reports which face it mapped to, so the weight does: the
+// mapped face's own TEXTMETRIC is read back, and the collection face whose
+// OS/2 weight sits closest to it wins.
+static face_bytes cjk_gdi_bytes(const char *family, int weight, bool bold)
 {
 	HFONT font = CreateFontA(-13, 0, 0, 0, weight, FALSE, FALSE, FALSE,
 	                         SHIFTJIS_CHARSET, OUT_TT_PRECIS, CLIP_DEFAULT_PRECIS,
 	                         CLEARTYPE_QUALITY, VARIABLE_PITCH, family);
 	if (!font)
 		return {};
-	std::vector<unsigned char> data;
+	face_bytes out;
 	if (HDC dc = CreateCompatibleDC(nullptr)) {
+		// GetFontData reads out of the font *selected into a DC*, so it wants
+		// a DC of its own rather than the font object, and the mapping-only
+		// request needs no window to draw into.
 		const HGDIOBJ was = SelectObject(dc, font);
-		DWORD bytes = GetFontData(dc, 0, 0, nullptr, 0);
-		if (bytes && bytes != GDI_ERROR) {
-			data.resize(bytes);
-			// The two toolchains disagree here and getting it wrong is a
-			// runtime memory error rather than a compile error: the SDK says
-			// LPDWORD, MinGW's wingdi.h says DWORD. Each is therefore called
-			// the way its own header declares it, and the two must not be
-			// "tidied" into one. A null buffer with a zero size asks for the
-			// size on both, which is why the query above needs no branch.
-#if defined(__MINGW32__)
-			if (GetFontData(dc, 0, 0, data.data(), bytes) == GDI_ERROR)
-#else
-			if (GetFontData(dc, 0, 0, data.data(), &bytes) == GDI_ERROR)
-#endif
-				data.clear();
-			else
-				data.resize(bytes);
-		}
+		TEXTMETRICA tm{};
+		const int target = GetTextMetricsA(dc, &tm) && tm.tmWeight
+		                     ? int(tm.tmWeight)
+		                     : (bold ? FW_BOLD : FW_NORMAL);
+		if (!cjk_get_font_bytes(dc, 0x74746366u /* 'ttcf' */, out.data))
+			cjk_get_font_bytes(dc, 0, out.data);   // a lone font, not a collection
 		SelectObject(dc, was);
 		DeleteDC(dc);
+		if (!out.data.empty()) {
+			size_t offs[32];
+			const size_t count =
+			    cjk_face_offsets(out.data.data(), out.data.size(), offs, 32);
+			if (!count)
+				out.data.clear();
+			else {
+				size_t best = 0;
+				unsigned gap = ~0u;
+				for (size_t i = 0; i < count; i++) {
+					const int w = cjk_face_weight_at(out.data.data(),
+					                                 out.data.size(), offs[i]);
+					if (w < 0)
+						continue;
+					const unsigned d = unsigned(abs(w - target));
+					if (d < gap) {
+						gap = d;
+						best = i;
+					}
+				}
+				out.face = int(best);
+			}
+		}
 	}
 	DeleteObject(font);
-	return data;
+	return out;
 }
 
 inline void cjk_offers(bool bold, std::vector<face_offer> &out)
@@ -182,8 +289,10 @@ inline void cjk_offers(bool bold, std::vector<face_offer> &out)
 	}
 	const int weight = bold ? FW_BOLD : FW_DONTCARE;
 	for (const std::string &family : ordered)
-		out.push_back({ std::string(), {},
-		                [family, weight] { return cjk_gdi_bytes(family.c_str(), weight); } });
+		out.push_back({ std::string(),
+		                [family, weight, bold] {
+			                return cjk_gdi_bytes(family.c_str(), weight, bold);
+		                } });
 }
 
 #elif defined(__APPLE__)
@@ -228,7 +337,7 @@ inline void cjk_offers(bool bold, std::vector<face_offer> &out)
 			bold ? cjk_family_path((std::string(family) + " W6").c_str())
 			     : cjk_family_path(family);
 		if (!path.empty())
-			out.push_back({ path, {}, {} });
+			out.push_back({ path, {} });
 	}
 }
 
@@ -276,7 +385,7 @@ inline void cjk_offers(bool bold, std::vector<face_offer> &out)
 	// at the first face it gets, so a repeat on the list costs nothing.
 	for (const char *family : cjk_families)
 		if (std::string path = cjk_fontconfig_match(family, bold); !path.empty())
-			out.push_back({ std::move(path), {}, {} });
+			out.push_back({ std::move(path), {} });
 }
 
 #endif
@@ -296,15 +405,13 @@ static bool cjk_read_file(const std::string &path, std::vector<unsigned char> &d
 	return !data.empty();
 }
 
-static bool cjk_offer_bytes(const face_offer &offer, std::vector<unsigned char> &data)
+static bool cjk_offer_bytes(const face_offer &offer, face_bytes &out)
 {
-	if (!offer.bytes.empty())
-		data = offer.bytes;
-	else if (offer.fetch)
-		data = offer.fetch();
-	else if (!cjk_read_file(offer.path, data))
+	if (offer.fetch)
+		out = offer.fetch();
+	else if (!cjk_read_file(offer.path, out.data))
 		return false;
-	return !data.empty();
+	return !out.data.empty();
 }
 
 // The first face the walk turns up, read into memory once and kept to process
@@ -321,38 +428,39 @@ static bool cjk_offer_bytes(const face_offer &offer, std::vector<unsigned char> 
 // The walk runs once per weight, and a walk that came back empty is remembered,
 // or a machine with no Japanese font installed would re-enumerate its fonts on
 // every call.
-inline const void *cjk_face_data(bool bold, size_t &bytes)
+inline const void *cjk_face_data(bool bold, size_t &bytes, int &face)
 {
 	static bool walked[2] = { false, false };
-	static std::vector<unsigned char> kept[2];
+	static face_bytes kept[2];
 	const int slot = bold ? 1 : 0;
 	if (!walked[slot]) {
 		walked[slot] = true;
 		std::vector<face_offer> offers;
 		cjk_offers(bold, offers);
 		for (face_offer &offer : offers) {
-			std::vector<unsigned char> data;
-			if (cjk_offer_bytes(offer, data)) {
-				kept[slot] = std::move(data);
+			face_bytes got;
+			if (cjk_offer_bytes(offer, got)) {
+				kept[slot] = std::move(got);
 				break;
 			}
 		}
 	}
-	bytes = kept[slot].size();
-	return kept[slot].empty() ? nullptr : kept[slot].data();
+	bytes = kept[slot].data.size();
+	face = kept[slot].face;
+	return kept[slot].data.empty() ? nullptr : kept[slot].data.data();
 }
 
-inline const void *cjk_font_data(size_t &bytes)
+inline const void *cjk_font_data(size_t &bytes, int &face)
 {
-	return cjk_face_data(false, bytes);
+	return cjk_face_data(false, bytes, face);
 }
 
 // The bold face, the same way. Null when this machine has none to be had, and
 // the caller then draws the regular face -- so a machine without a bold is no
 // worse off than one without Japanese.
-inline const void *cjk_bold_font_data(size_t &bytes)
+inline const void *cjk_bold_font_data(size_t &bytes, int &face)
 {
-	return cjk_face_data(true, bytes);
+	return cjk_face_data(true, bytes, face);
 }
 
 // Put one CJK face into an atlas at a given size, and return the font ImGui
@@ -370,15 +478,17 @@ inline const void *cjk_bold_font_data(size_t &bytes)
 inline ImFont *add_cjk_font(ImFontAtlas *atlas, float px = 16.0f, bool bold = false)
 {
 	size_t bytes = 0;
-	const void *data = bold ? cjk_bold_font_data(bytes) : cjk_font_data(bytes);
+	int face = 0;
+	const void *data = bold ? cjk_bold_font_data(bytes, face) : cjk_font_data(bytes, face);
 	if (!data && bold) {
 		size_t regular = 0;
-		data = cjk_font_data(regular);
+		data = cjk_font_data(regular, face);
 		bytes = regular;
 	}
 	if (data) {
 		ImFontConfig cfg;
 		cfg.FontDataOwnedByAtlas = false;
+		cfg.FontNo = face;             // which face of a TTC; 0 for a lone font
 		if (ImFont *font = atlas->AddFontFromMemoryTTF(
 		        const_cast<void *>(data), int(bytes), px, &cfg))
 			return font;
