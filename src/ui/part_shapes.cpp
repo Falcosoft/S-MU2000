@@ -99,12 +99,18 @@ void panel(const char *id, const char *title, float w, float h, int part, xg::mo
 	}
 	const bool knobs = index != PANEL_FIXED && (index < 0 || shapes_knobs(index));
 	bool toggle_hovered = false;
+	const float title_top = ImGui::GetCursorScreenPos().y;
 	ImGui::PushFont(nullptr, fs * 0.8f);      // 見出しは小さめに
 	if (index < 0)
 		ImGui::TextUnformatted(title);
 	else if (title_toggle(title, "##mode", knobs, toggle_hovered))
 		set_shapes_knobs(index, !knobs);
 	ImGui::PopFont();
+	// 見出しの行の上か（Ctrl＋右クリックで区画ごと送るのは見出しだけ）
+	const float title_bottom = ImGui::GetCursorScreenPos().y;
+	const float my = ImGui::GetIO().MousePos.y;
+	const bool over_title = !toggle_hovered && my >= title_top && my < title_bottom &&
+	                        ImGui::IsWindowHovered(ImGuiHoveredFlags_AllowWhenBlockedByActiveItem);
 	const std::string before = hint_text();
 	if (!knobs) {
 		// 絵だけ。区画の残りを全部使う
@@ -116,6 +122,9 @@ void panel(const char *id, const char *title, float w, float h, int part, xg::mo
 			param_slider(k, part, m, br);
 		ImGui::PopItemWidth();
 	}
+	// 見出しの上なら、Ctrl＋右クリックで区画のパラメータをまとめて送る
+	if (keys.size() && over_title)
+		out_hover_group(std::vector<const char *>(keys.begin(), keys.end()), part);
 	// カーソルの下の部品が説明を出さなかったら、区画そのものの説明を
 	if (about && !toggle_hovered && hint_text() == before &&
 	    ImGui::IsWindowHovered(ImGuiHoveredFlags_ChildWindows | ImGuiHoveredFlags_AllowWhenBlockedByActiveItem))
@@ -1303,6 +1312,8 @@ void drum_tab(int part, xg::model &m, const xg_snapshot &ram, bridge &br, float 
 		if (ImGui::DragInt("##alt", &alt, 0.2f, dp[3].lo, dp[3].hi, at.c_str(), ImGuiSliderFlags_AlwaysClamp))
 			drum_write(br, set, key, 3, alt);
 		if (ImGui::IsItemHovered())
+			out_hover_drum(set, key, 3);
+		if (ImGui::IsItemHovered())
 			hint("Alt  %s\n%s", drum_value_text(3, alt).c_str(), help_for("drum.Alt") ? help_for("drum.Alt") : "");
 		for (int i : { 8, 9, 10 }) {
 			ImGui::SameLine();
@@ -1311,6 +1322,7 @@ void drum_tab(int part, xg::model &m, const xg_snapshot &ram, bridge &br, float 
 			if (ImGui::Checkbox(label.c_str(), &on))
 				drum_write(br, set, key, i, on ? 1 : 0);
 			if (ImGui::IsItemHovered()) {
+				out_hover_drum(set, key, i);
 				const std::string hk = std::string("drum.") + dp[i].head;
 				hint("%s  %s\n%s", dp[i].head, drum_value_text(i, on ? 1 : 0).c_str(), help_for(hk.c_str()) ? help_for(hk.c_str()) : "");
 			}
@@ -1354,6 +1366,7 @@ void part_shapes::drum_hidden(bridge &br)
 void part_shapes::draw(xg::model &m, const xg_snapshot &ram, bridge &br)
 {
 	set_current_ram(&ram);            // 絵が音色の中身を読むため（ピッチ EG など）
+	out_begin_frame();                // Ctrl＋右クリックで送るものは、部品がコマごとに名乗り直す
 	begin_hint_bar();                 // 絵や名前の説明は、マウスのそばでなく下の帯に出す
 	const ImGuiViewport *vp = ImGui::GetMainViewport();
 	ImGui::SetNextWindowPos(vp->WorkPos);
@@ -1408,7 +1421,11 @@ void part_shapes::draw(xg::model &m, const xg_snapshot &ram, bridge &br)
 	}
 	ImGui::TextUnformatted(voice.c_str());
 
-	// 表示の大きさと、説明のチェックボックスは右端へ
+	// 送り先（Ctrl＋右クリックで送る先）、表示の大きさと、説明のチェックボックスは右端へ
+	if (out_ready()) {
+		ImGui::SameLine(ImGui::GetContentRegionAvail().x + ImGui::GetCursorPosX() - fs * 34);
+		out_port_combo();
+	}
 	ImGui::SameLine(ImGui::GetContentRegionAvail().x + ImGui::GetCursorPosX() - fs * 18);
 	if (ImGui::SmallButton("-"))
 		set_shapes_zoom(zoom - 0.1f);
@@ -1454,6 +1471,9 @@ void part_shapes::draw(xg::model &m, const xg_snapshot &ram, bridge &br)
 				drum_pane(part, m, br);
 			else
 				program_pane(part, m, &ram, br);
+			// 面の上なら、Ctrl＋右クリックで今の音色（バンクセレクトとプログラムチェンジ）を送る
+			if (ImGui::IsWindowHovered(ImGuiHoveredFlags_ChildWindows))
+				out_hover_program(part);
 			ImGui::PopFont();
 		}
 		ImGui::EndChild();
@@ -1649,6 +1669,7 @@ void part_shapes::draw(xg::model &m, const xg_snapshot &ram, bridge &br)
 	ImGui::EndChild();
 	}
 	end_hint_bar();
+	out_end_frame(m, ram, br);
 	br.want_scope(scope);
 
 	ImGui::PopFont();
