@@ -203,6 +203,9 @@ struct ui_texts {
 	const char *ed_tab_mixer;
 	const char *ed_tab_part;
 	const char *ed_tab_drum;
+	const char *ed_tab_sysex;
+	const char *sxd_hint;
+	const char *sxd_clear;
 	const char *drum_used_by;
 	const char *drum_none;
 	const char *drum_reset;

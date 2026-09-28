@@ -1,6 +1,7 @@
 // license:BSD-3-Clause
 
 #include "pc_editor.h"
+#include "sysex_decode.h"
 #include "eq_curve.h"
 #include "ui/texts.h"
 #include "xg_ui.h"
@@ -489,6 +490,50 @@ void pc_editor::drum_page(xg::model &m, const xg_snapshot &ram, bridge &br)
 }
 
 
+void pc_editor::decode_page(xg::model &m)
+{
+	const float fs = ImGui::GetFontSize();
+	const ImGuiStyle &st = ImGui::GetStyle();
+	ImGui::TextDisabled("%s", UI_TEXT(sxd_hint, "Paste MIDI one message per line (\"F0 43 10 4C ...\", \"f0h 43h ...\", Domino's Ex: lines). The meaning of each line shows on its right. Effect parameters are read with the effect types set now"));
+	if (ImGui::SmallButton(UI_TEXT(sxd_clear, "Clear")))
+		m_sx_text[0] = 0;
+
+	// 行に分ける
+	std::vector<std::string> lines(1);
+	for (const char *p = m_sx_text; *p; p++) {
+		if (*p == '\n')
+			lines.emplace_back();
+		else if (*p != '\r')
+			lines.back() += *p;
+	}
+	const float line_h = ImGui::GetTextLineHeight();
+	// 欄は行の数ぶんの高さにして、中では送らない（右の意味と行をそろえるため）。送るのは外の枠
+	if (ImGui::BeginChild("sxd", ImVec2(0, 0), ImGuiChildFlags_None, ImGuiWindowFlags_HorizontalScrollbar)) {
+		const ImVec2 avail = ImGui::GetContentRegionAvail();
+		const float box_w = std::min(fs * 30.0f, avail.x * 0.45f);
+		const float box_h = std::max(avail.y, float(lines.size() + 2) * line_h + st.FramePadding.y * 2.0f);
+		const ImVec2 top = ImGui::GetCursorScreenPos();
+		ImGui::InputTextMultiline("##sx", m_sx_text, sizeof(m_sx_text), ImVec2(box_w, box_h));
+		ImDrawList *dl = ImGui::GetWindowDrawList();
+		const float x = top.x + box_w + fs * 0.8f;
+		const float y0 = top.y + st.FramePadding.y;
+		const ImVec2 mouse = ImGui::GetIO().MousePos;
+		for (size_t i = 0; i < lines.size(); i++) {
+			bool bad = false;
+			const std::string s = sxd::line(lines[i], m, bad);
+			if (s.empty())
+				continue;
+			const float y = y0 + float(i) * line_h;
+			dl->AddText(ImVec2(x, y), bad ? IM_COL32(255, 170, 90, 255) : ImGui::GetColorU32(ImGuiCol_Text), s.c_str());
+			// 長くて見切れる行は、カーソルを載せると全部出す
+			if (mouse.x >= x && mouse.y >= y && mouse.y < y + line_h && ImGui::IsWindowHovered())
+				ImGui::SetTooltip("%s", s.c_str());
+		}
+	}
+	ImGui::EndChild();
+}
+
+
 void pc_editor::draw(xg::model &m, const xg_snapshot &ram, bridge &br)
 {
 	m_ram = &ram;
@@ -551,6 +596,25 @@ void pc_editor::draw(xg::model &m, const xg_snapshot &ram, bridge &br)
 		const ImGuiTabItemFlags drum_flags = open_drum >= 0 ? ImGuiTabItemFlags_SetSelected : 0;
 		if (ImGui::BeginTabItem(UI_TEXT(ed_tab_drum, "Drum"), nullptr, drum_flags)) {
 			drum_page(m, ram, br);
+			ImGui::EndTabItem();
+		}
+		// 確かめ用: SMU2000_EDITOR_TAB=sysex で最初から開き、SMU2000_SYSEX_FILE の中身を入れておく
+		static bool open_sx = [] {
+			const char *e = std::getenv("SMU2000_EDITOR_TAB");
+			return e && !std::strcmp(e, "sysex");
+		}();
+		if (open_sx) {
+			if (const char *f = std::getenv("SMU2000_SYSEX_FILE"))
+				if (FILE *fp = std::fopen(f, "rb")) {
+					const size_t n = std::fread(m_sx_text, 1, sizeof(m_sx_text) - 1, fp);
+					m_sx_text[n] = 0;
+					std::fclose(fp);
+				}
+		}
+		const ImGuiTabItemFlags sx_flags = open_sx ? ImGuiTabItemFlags_SetSelected : 0;
+		open_sx = false;
+		if (ImGui::BeginTabItem(UI_TEXT(ed_tab_sysex, "SysEx"), nullptr, sx_flags)) {
+			decode_page(m);
 			ImGui::EndTabItem();
 		}
 		if (open_drum > 0) {
