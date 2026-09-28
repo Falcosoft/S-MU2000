@@ -329,6 +329,10 @@ IMGUI_CORE  := $(IMGUI_DIR)/imgui.cpp $(IMGUI_DIR)/imgui_draw.cpp \
                $(IMGUI_DIR)/imgui_tables.cpp $(IMGUI_DIR)/imgui_widgets.cpp
 IMGUI_FLAGS := -I $(IMGUI_DIR)
 
+# Triangulation for SVG fills with holes
+EARCUT_INC  := -I third_party/earcut.hpp/include
+CXXFLAGS += $(EARCUT_INC)
+
 # ---- Windows-side ports (audio, MIDI, display) and VST3 ----------------------
 #
 # These still call the Windows APIs directly. The macOS ones are added at each
