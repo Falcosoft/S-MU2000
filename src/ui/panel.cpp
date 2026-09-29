@@ -346,20 +346,39 @@ void panel::build_fonts() const
 		return;
 	ImFontAtlas *atlas = ImGui::GetIO().Fonts;
 
+	// The em GDI asked for, its way. make_font() truncated px * m_scale down
+	// and floored the result, and the floor is what carries small sizes: at
+	// 600 px wide GDI held small at 7 where rounding gave 5, a third less text
+	// on the labels that make up most of the panel. Rounding *up* is just as
+	// wrong the other way -- 8.5 * 0.935 is 8, and int() gives the 7 GDI drew.
+	auto gdi_em = [this](double px, int floor_px) {
+		return std::max(floor_px, int(px * m_scale));
+	};
 	// キートップの記号。中に「SELECT」が 6 文字入る太字
 	const int key_px = std::max(6, int(std::lround(9.0 * m_scale)));
 	// _tick 番号用。34 個の番号をバーの真下に並べるので、思い切り小さくする
-	const int tiny_px = std::max(5, int(std::lround(6.5 * m_scale)));
-	const int label_px = std::max(7, int(std::lround(13.0 * m_scale)));
-	const int small_px = std::max(5, int(std::lround(8.5 * m_scale)));
+	const int tiny_px  = gdi_em(6.5, 5);
+	const int label_px = gdi_em(13.0, 7);
+	const int small_px = gdi_em(8.5, 7);
 	// LCD のMIC / LINE の札用。箱の高さから決めるので LCD の寸法しだい
 	const lcd_geom g = lcd_grid();
-	const int num_px = std::max(4, int(std::lround(g.line_h * 1.0)));
+	const int num_px = std::max(4, int(std::lround(g.line_h * 1.0)));  // lround here
 	RECT box[2];
 	lcd_tag_boxes(g, box);
 	const int bw = box[0].right - box[0].left, bh = box[0].bottom - box[0].top;
 	// 写真では大文字の高さが箱の 75%、「MIC」の幅が箱の 71%
-	const int tag_px = std::max(4, int(std::min(1.07 * bh, 0.40 * bw)));
+	const int tag_px = std::max(4, int(std::min(1.07 * bh, 0.40 * bw)));  // truncates
+
+	// The ems above are GDI's, but the face is not: GDI asked for Segoe UI
+	// and Arial, and this is one CJK family per weight (font_file.h). Hiragino
+	// Sans caps stand at 78% of its em where Segoe UI's are 70%, so the same
+	// em here draws about a ninth taller, and shaped differently besides.
+	// cjk_face_em() does not cover that -- it only puts stb's hhea span back
+	// on em terms, and Hiragino's span already is its em. Left alone on
+	// purpose: panel.txt states its sizes in ems, so matching the em is what
+	// keeps the layout where it was authored. A per-face cap-height factor
+	// would buy the last few percent against the GDI screenshots at the cost
+	// of a knob tuned to one reference typeface.
 
 	const int want[6] = { label_px, small_px, tiny_px, key_px, tag_px, num_px };
 	if (m_font_ctx == ctx && m_font_px[0] != 0) {

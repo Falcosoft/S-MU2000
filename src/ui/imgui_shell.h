@@ -68,6 +68,15 @@ inline im::fonts panel_fonts()
 	f.label_px = 13.0f * em;
 	f.small_px = 8.5f * em;
 	f.tiny_px = 6.5f * em;
+	// The strip at the top of the window: its own size, not a panel slot.
+	//
+	// This is GDI's 13 (toolbar.h), the same number as the panel's label slot,
+	// and it is what the strip draws at on macOS and for Latin everywhere.
+	// Windows CJK labels are scaled up inside toolbar::paint, because kanji
+	// fill the em and Latin caps reach only 0.70 of it, so one size cannot suit
+	// both in a 26 px band. It is a window fixed size: the strip does not scale
+	// with the window, so a resize must not make it jump around.
+	f.bar_px = 13.0f * em;
 	return f;
 }
 

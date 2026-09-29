@@ -184,7 +184,7 @@ public:
 		// The bar paints after the panel (the panel fills everything). It keeps
 		// the window's fixed 16 px set: it does not scale with the panel, so the
 		// panel's own sizes would only make it jump around while resizing
-		bar.paint(dl, w, f.label, f.label_px);
+		bar.paint(dl, w, f.label, f.bar_px);
 	}
 
 	// ---- shared input decisions (both windows act the same way)

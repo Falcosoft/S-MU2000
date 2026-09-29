@@ -108,10 +108,13 @@ public:
 	int  down() const { return m_down; }
 
 	// ボタンの帯を描く。字は実測で、hit() が当てる四角もここで覚える
+	//
+	// px は半角のときの大きさ。和文のときは label_px() が大きくする
 	void paint(ImDrawList *dl, int w, ImFont *font, float px) const
 	{
 		if (m_items.empty())
 			return;
+		px = label_px(px);
 		im::fill(dl, ImVec2(0, 0), ImVec2(float(w), float(HEIGHT)), BAR_BG);
 		im::line(dl, ImVec2(0, float(HEIGHT - 1)), ImVec2(float(w), float(HEIGHT - 1)),
 		         BAR_EDGE, 1.0f);
@@ -143,6 +146,44 @@ private:
 	static constexpr int GAP = 6;         // ボタンの間
 	static constexpr int SIDE = 11;       // 字の左右の余白
 	static constexpr int CHAR_W = 13;     // 字 1 つぶんの見当（全角で測る）
+
+	// On Windows the strip is sized per language; everywhere else, and on macOS
+	// in both, it is GDI's 13 exactly.
+	//
+	// Japanese: kanji and kana carry their ink over the full em height (measured
+	// ink/em ~ 1.0) while a Latin capital reaches only ~0.70 of it (Hiragino
+	// 76.6%, Meiryo UI 73.6%, Segoe UI 70.0%), so GDI's 13 fills the 26 px band
+	// with Japanese and looks lost in it with English. 16.5 is where Windows
+	// Japanese matched the screenshots.
+	//
+	// English: a different problem. GDI drew the bar in Segoe UI; this draws it
+	// in the CJK face the walk picked (Yu Gothic UI), because the port has one
+	// face per weight and no fallback chain. Same em, different Latin designs,
+	// so 13 lands smaller than the reference and needs 14.5. The honest fix is a
+	// Latin fallback face rather than a second tuned number; that is a bigger
+	// change than this strip, so it waits.
+	//
+	// Both are tuned against the GDI screenshots, not derived, and both are
+	// applied as ratios so the sizes cannot drift apart.
+	//
+	// The test is the UI language (lang.h), not the string: every label in the
+	// strip comes from one texts table, so a per-label byte scan would only
+	// ever re-derive what get_lang() already says -- and wrongly, since an
+	// English table could still carry a fullwidth form.
+	static float label_px(float latin_px)
+	{
+#ifdef _WIN32
+		// Both tuned against the GDI screenshots; see the note above. Japanese
+		// wants 16.5 because kanji fill the em. English wants a little more than
+		// GDI's 13 for a different reason: the bar's Latin is drawn by Yu Gothic
+		// UI here, where GDI drew it in Segoe UI, and the two faces set Latin
+		// differently at one em.
+		return get_lang() == lang::ja ? latin_px * (16.5f / 13.0f)
+		                              : latin_px * (14.5f / 13.0f);
+#else
+		return latin_px;
+#endif
+	}
 
 	static constexpr COLORREF BAR_BG   = RGB(0x1c, 0x1c, 0x20);
 	static constexpr COLORREF BAR_EDGE = RGB(0x38, 0x38, 0x40);

@@ -1016,18 +1016,13 @@ void svg_art::draw_image(ImDrawList *dl, const RECT &dst, double deg) const
 	// the line below keeps both with margin on each side.
 	// SMU_NATIVE_TEXTURES=1 forces the native side, for A/B testing.
 	static constexpr double NATIVE_MIN_RATIO = 0.3;
-	// Small destinations stay native too: resampling baked glyphs (nav
-	// legends) is pure loss, and a ~50px target has no aliasing to cure.
-	// Device pixels, so Retina engages it for the same art one step later.
-	static constexpr double NATIVE_MIN_SIZE = 64.0;
 	ImVec2 fb = ImGui::GetIO().DisplayFramebufferScale;
 	if (fb.x <= 0 || fb.y <= 0)
 		fb = ImVec2(1, 1);
 	const int tw = grain(int(std::ceil(pw * fb.x)));
 	const int th = grain(int(std::ceil(ph * fb.y)));
 	const bool native = svg_force_native() ||
-	                    std::min(double(tw) / base.w, double(th) / base.h) >= NATIVE_MIN_RATIO ||
-	                    std::min(double(tw), double(th)) <= NATIVE_MIN_SIZE;
+	                    std::min(double(tw) / base.w, double(th) / base.h) >= NATIVE_MIN_RATIO;
 
 	im::tex *t = static_cast<im::tex *>(m_cache.gpu);
 	if (!t) {

@@ -80,7 +80,7 @@ inline void shot_frame(rig &r, ImDrawList *dl, const im::fonts &f, int w, int h,
 	p.set_volume(0.8);
 	p.paint(dl, s, 0, "");
 	if (!lcd_only)
-		r.bar.paint(dl, w, f.label, f.label_px);
+		r.bar.paint(dl, w, f.label, f.bar_px);
 }
 
 } // namespace shot_detail

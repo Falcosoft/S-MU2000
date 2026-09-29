@@ -28,6 +28,12 @@ namespace im {
 // tag:    the small legends on the panel art
 // num:    the numeric readouts
 //
+// bar: the window's top strip, which has no slot in the panel's six (it is
+// window furniture, not panel lettering) and is fixed-size by design -- it does
+// not scale with the window, so a resize must not make it jump around. This is
+// the Latin size; toolbar::paint scales CJK labels up from it, since one em
+// cannot fill a 26 px band for both scripts.
+//
 // A null slot is not an error: the text helpers in draw_imgui.h fall back to
 // ImGui's current font, which is the 16 px default and about twice the size the
 // panel means. It only happens when build_fonts() has not run yet.
@@ -36,6 +42,7 @@ struct fonts {
 	ImFont *key = nullptr, *tag = nullptr, *num = nullptr;
 	float label_px = 13.0f, small_px = 8.5f, tiny_px = 6.5f;
 	float key_px = 9.0f, tag_px = 8.0f, num_px = 8.0f;
+	float bar_px = 16.0f;
 };
 
 } // namespace im
