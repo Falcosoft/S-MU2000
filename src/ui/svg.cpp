@@ -923,6 +923,15 @@ bool svg_art::load_png(const std::string &path)
 	return load_pixels(w, h, raw);
 }
 
+// Set SMU_NATIVE_TEXTURES=1 to force native upload (A/B testing); unset or
+// "0" follows the ratio below. Presence alone used to force it, which made
+// =0 lie -- the value is what counts.
+static bool svg_force_native()
+{
+	const char *v = std::getenv("SMU_NATIVE_TEXTURES");
+	return v && v[0] != '\0' && !(v[0] == '0' && v[1] == '\0');
+}
+
 bool svg_art::load_pixels(int w, int h, const std::vector<uint32_t> &raw)
 {
 	clear();
@@ -937,29 +946,32 @@ bool svg_art::load_pixels(int w, int h, const std::vector<uint32_t> &raw)
 		l0.px[i] = premul(raw[i]);
 	m_mips.push_back(std::move(l0));
 
-	// 半分ずつ縮めた段。2 × 2 の平均（端の余りは端の画素を使い回す）
-	while (m_mips.back().w > 1 || m_mips.back().h > 1) {
-		const level &a = m_mips.back();
-		level b;
-		b.w = std::max(1, (a.w + 1) / 2);
-		b.h = std::max(1, (a.h + 1) / 2);
-		b.px.resize(size_t(b.w) * size_t(b.h));
-		for (int y = 0; y < b.h; y++)
-			for (int x = 0; x < b.w; x++) {
-				const int x0 = std::min(2 * x, a.w - 1), x1 = std::min(2 * x + 1, a.w - 1);
-				const int y0 = std::min(2 * y, a.h - 1), y1 = std::min(2 * y + 1, a.h - 1);
-				const uint32_t q[4] = { a.px[size_t(y0) * a.w + x0], a.px[size_t(y0) * a.w + x1],
-				                        a.px[size_t(y1) * a.w + x0], a.px[size_t(y1) * a.w + x1] };
-				uint32_t out = 0;
-				for (int sh = 0; sh < 32; sh += 8) {
-					uint32_t sum = 0;
-					for (uint32_t v : q)
-						sum += (v >> sh) & 0xff;
-					out |= ((sum + 2) / 4) << sh;
+	// 半分ずつ縮めた段。2 × 2 の平均（端の余りは端の画素を使い回す）。
+	// 縮小側だけ要るので、SMU_NATIVE_TEXTURES=1 では作らない
+	if (!svg_force_native()) {
+		while (m_mips.back().w > 1 || m_mips.back().h > 1) {
+			const level &a = m_mips.back();
+			level b;
+			b.w = std::max(1, (a.w + 1) / 2);
+			b.h = std::max(1, (a.h + 1) / 2);
+			b.px.resize(size_t(b.w) * size_t(b.h));
+			for (int y = 0; y < b.h; y++)
+				for (int x = 0; x < b.w; x++) {
+					const int x0 = std::min(2 * x, a.w - 1), x1 = std::min(2 * x + 1, a.w - 1);
+					const int y0 = std::min(2 * y, a.h - 1), y1 = std::min(2 * y + 1, a.h - 1);
+					const uint32_t q[4] = { a.px[size_t(y0) * a.w + x0], a.px[size_t(y0) * a.w + x1],
+					                        a.px[size_t(y1) * a.w + x0], a.px[size_t(y1) * a.w + x1] };
+					uint32_t out = 0;
+					for (int sh = 0; sh < 32; sh += 8) {
+						uint32_t sum = 0;
+						for (uint32_t v : q)
+							sum += (v >> sh) & 0xff;
+						out |= ((sum + 2) / 4) << sh;
+					}
+					b.px[size_t(y) * b.w + x] = out;
 				}
-				b.px[size_t(y) * b.w + x] = out;
-			}
-		m_mips.push_back(std::move(b));
+			m_mips.push_back(std::move(b));
+		}
 	}
 	m_vb[0] = m_vb[1] = 0;
 	m_vb[2] = w;
@@ -980,7 +992,7 @@ void svg_art::release_gpu() const
 // time. Rounding the size *down* to a multiple of this keeps the texture just
 // under its destination, so the GPU magnifies a little or lands 1:1 -- the
 // harmless direction, and less memory than rounding up would take.
-static constexpr int SIZE_GRAIN = 8;
+static constexpr int SIZE_GRAIN = 1;
 static int grain(int px) { return std::max(SIZE_GRAIN, px / SIZE_GRAIN * SIZE_GRAIN); }
 
 void svg_art::draw_image(ImDrawList *dl, const RECT &dst, double deg) const
@@ -996,15 +1008,43 @@ void svg_art::draw_image(ImDrawList *dl, const RECT &dst, double deg) const
 	const double cx = (dst.left + dst.right) * 0.5, cy = (dst.top + dst.bottom) * 0.5;
 	const double x0 = cx - pw / 2, y0 = cy - ph / 2;
 
-	const int tw = grain(int(std::ceil(pw)));
-	const int th = grain(int(std::ceil(ph)));
+	// Minify a lot and the GPU needs help (it has no mipmaps to fall back
+	// on); otherwise the bytes go over unchanged. Sizes below are device
+	// pixels, so a 2x display gets full-res bytes where a point-size target
+	// would have halved them away. The line sits below what any test has
+	// needed: resample won at 0.2, native at 0.435 and everywhere above, so
+	// the line below keeps both with margin on each side.
+	// SMU_NATIVE_TEXTURES=1 forces the native side, for A/B testing.
+	static constexpr double NATIVE_MIN_RATIO = 0.3;
+	// Small destinations stay native too: resampling baked glyphs (nav
+	// legends) is pure loss, and a ~50px target has no aliasing to cure.
+	// Device pixels, so Retina engages it for the same art one step later.
+	static constexpr double NATIVE_MIN_SIZE = 64.0;
+	ImVec2 fb = ImGui::GetIO().DisplayFramebufferScale;
+	if (fb.x <= 0 || fb.y <= 0)
+		fb = ImVec2(1, 1);
+	const int tw = grain(int(std::ceil(pw * fb.x)));
+	const int th = grain(int(std::ceil(ph * fb.y)));
+	const bool native = svg_force_native() ||
+	                    std::min(double(tw) / base.w, double(th) / base.h) >= NATIVE_MIN_RATIO ||
+	                    std::min(double(tw), double(th)) <= NATIVE_MIN_SIZE;
 
 	im::tex *t = static_cast<im::tex *>(m_cache.gpu);
 	if (!t) {
 		t = new im::tex;
 		m_cache.gpu = t;
 	}
-	if (!t->valid() || m_cache.w != tw || m_cache.h != th) {
+	if (native) {
+		// Native bytes, GPU scales. Upload once; resizes never touch it.
+		if (!t->valid()) {
+			std::vector<uint32_t> px(size_t(base.w) * size_t(base.h));
+			for (size_t i = 0; i < px.size(); i++)
+				px[i] = unpremul(base.px[i]);
+			m_cache.w = base.w;
+			m_cache.h = base.h;
+			t->upload(base.w, base.h, px);
+		}
+	} else if (!t->valid() || m_cache.w != tw || m_cache.h != th) {
 		// 一番深い段（1/2, 1/4 …）から、足りる 段まで戻る
 		size_t li = 0;
 		while (li + 1 < m_mips.size() && m_mips[li + 1].w >= tw)
