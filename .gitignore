@@ -6,6 +6,11 @@ build-*/
 *.wav
 roms/
 
+# web/ build outputs and deps (rebuild with npm run build in web/)
+web/out/
+web/node_modules/
+web/dist/
+
 # 同じところで MAME を走らせたときに出るもの
 cfg/
 nvram/
