@@ -87,6 +87,19 @@ inline float cap_height(ImFont *font, float px)
 	return px * 0.7f;
 }
 
+// How far below the top of the line the cap actually starts
+inline float cap_top_offset(ImFont *font, float px)
+{
+	if (!font)
+		return 0.0f;
+	ImFontBaked *baked = font->GetFontBaked(px);
+	if (!baked || baked->Size <= 0.0f)
+		return 0.0f;
+	if (const ImFontGlyph *h = baked->FindGlyphNoFallback('H'))
+		return h->Y0 * (px / baked->Size);
+	return 0.0f;
+}
+
 inline ImVec2 pos_of(const RECT &r) { return ImVec2(float(r.left), float(r.top)); }
 inline ImVec2 size_of(const RECT &r)
 {
@@ -191,11 +204,13 @@ inline void text_cap(ImDrawList *dl, const RECT &r, const char *s, COLORREF c,
 {
 	if (!s || !s[0])
 		return;
+	// AddText puts `at` at the top of the line, not of the cap
 	const float cap = cap_height(font, px);
+	const float cap_top = cap_top_offset(font, px);
 	const ImVec2 ts = font ? font->CalcTextSizeA(px, FLT_MAX, 0.0f, s)
 	                       : ImGui::CalcTextSize(s);
 	ImVec2 at((float(r.left) + float(r.right)) * 0.5f - ts.x * 0.5f,
-	         (float(r.top) + float(r.bottom)) * 0.5f - cap * 0.5f);
+	         (float(r.top) + float(r.bottom)) * 0.5f - cap * 0.5f - cap_top);
 	if (!center_x)
 		at.x = float(r.left);
 	if (font)
