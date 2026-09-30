@@ -283,10 +283,10 @@ Budget is `~2.9 ms`. Exact averages over budget, so Firefox
 stutters every other quantum and Chromium discards everything
 (silence) — exactly the reported symptom. Fast synth averages
 `0.58 ms`; the `7 ms` max is the one-time per-voice learn spike,
-then it settles. Live page now has Fast synth checked by default
-(`live.html`, wired through `protocol.ts` init ->
-`processor.ts` applies FX after reset, engine on going live,
-mirroring `render.cpp`).
+then it settles. The live page offers an opt-in Fast synth checkbox
+(default off, faithful emulation first per project rule), wired
+through `protocol.ts` init -> `processor.ts` (FX after reset, engine
+on going live, mirroring `render.cpp`).
 
 ### Upstream merge 2026-09-30 — native FX fidelity fix
 

@@ -107,9 +107,17 @@ export async function setupRomCard(
         }
         folderLabel.textContent = folder;
         if (shouldRemember) {
+            // Persist only the six ROM slots.
+            // Other files stay session-only (basename collisions).
+            const slotNames = new Set(
+                ROM_SLOTS.map((slot) => slot.fileName)
+            );
+            const romsOnly = picked.filter((file) =>
+                slotNames.has(file.name.toLowerCase())
+            );
             void (async () => {
                 try {
-                    await storeRoms(picked);
+                    await storeRoms(romsOnly);
                 } catch {
                     // Session-only use; the checklist still works.
                 }

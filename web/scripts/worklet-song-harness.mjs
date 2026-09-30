@@ -24,7 +24,7 @@ const budgetMs = (quantumFrames / rate) * 1000;
 const argv = process.argv.slice(2);
 const positional = [];
 let secondsCap = 30;
-let fast = process.env.FAST === "0" ? false : true;
+let fast = process.env.FAST === "1";
 let romsDir = path.resolve(repoRoot, "roms");
 for (let i = 0; i < argv.length; i++) {
     const a = argv[i];

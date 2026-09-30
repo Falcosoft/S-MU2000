@@ -161,36 +161,41 @@ int smu_reset()
 	for (int i = 0; i < 4; i++)
 		if (!g_have_wave[i]) { set_err("wave ROM が足りない"); return -1; }
 
-	auto prog = std::make_shared<std::vector<u8>>(g_prog.begin(), g_prog.end());
-	g_mu->set_program_rom(std::move(prog));
-
-	// Interleave identical to mu2000::load_wave (ic49/ic50/ic53/ic54).
-	auto wave = std::make_shared<std::vector<u8>>(0x2000000, 0);
-	for (int i = 0; i < 4; i++) {
-		const std::vector<uint8_t> &part = g_wave_part[i];
-		const size_t base = (i >= 2) ? 0x1000000 : 0;
-		const size_t off = (i & 1) ? 2 : 0;
-		for (size_t j = 0; j < part.size(); j += 2) {
-			const size_t dst = base + j * 2 + off;
-			(*wave)[dst + 0] = part[j + 0];
-			(*wave)[dst + 1] = part[j + 1];
-		}
+	if (!g_mu->load_program_data(g_prog.data(), g_prog.size())) {
+		set_err(g_mu->error());
+		return -1;
 	}
-	g_mu->set_wave_rom(std::move(wave));
+
+	// Wave interleave and sine-table rebuild live in mu2000
+	// (load_wave_data / load_sintab_data); the file loaders use them too.
+	const u8 *const parts[4] = {
+		g_wave_part[0].data(), g_wave_part[1].data(),
+		g_wave_part[2].data(), g_wave_part[3].data()
+	};
+	const size_t sizes[4] = {
+		g_wave_part[0].size(), g_wave_part[1].size(),
+		g_wave_part[2].size(), g_wave_part[3].size()
+	};
+	if (!g_mu->load_wave_data(parts, sizes)) {
+		set_err(g_mu->error());
+		return -1;
+	}
 
 	if (g_sintab.size() == 0x10000) {
-		auto st = std::make_shared<std::vector<u16>>(0x8000);
-		for (size_t i = 0; i < st->size(); i++)
-			(*st)[i] = u16(g_sintab[i * 2] | (g_sintab[i * 2 + 1] << 8));
-		// Same rebuild as mu2000::load_sintab for old 0-starting tables.
-		if ((*st)[0] < 0x4000) {
-			for (size_t i = 0; i < st->size(); i++)
-				(*st)[i] = u16(std::min(65535.0, std::round(0x8000 + std::sin((i + 0.5) / 0x8000 * 3.14159265358979323846 / 2) * 0x7fff)));
+		if (!g_mu->load_sintab_data(g_sintab.data(), g_sintab.size())) {
+			set_err(g_mu->error());
+			return -1;
 		}
-		g_mu->set_sintab_rom(std::move(st));
 	}
 
 	g_mu->reset();
+	// Staged copies are now owned by the emulator; release them (~36 MB).
+	g_prog.clear(); g_prog.shrink_to_fit();
+	for (int i = 0; i < 4; i++) {
+		g_wave_part[i].clear(); g_wave_part[i].shrink_to_fit();
+		g_have_wave[i] = false;
+	}
+	g_sintab.clear(); g_sintab.shrink_to_fit();
 	g_next = 0;
 	g_port = -1;
 	g_rendered = 0;
