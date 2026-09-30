@@ -52,6 +52,8 @@ export async function init(): Promise<void> {
         panicButton.disabled = !isLive;
         midiButton.disabled = !isLive;
         toneButton.disabled = context === undefined;
+        // Engine choice applies at boot; lock it once the node exists.
+        fastSynth.disabled = node !== undefined;
     };
 
     const card = await setupRomCard(

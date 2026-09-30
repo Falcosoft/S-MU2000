@@ -37,11 +37,15 @@
             </div>
             <div class="row">
                 <label>
-                    <input type="checkbox" id="fastSynth" />
-                    Fast synth (opt-in, slight sound difference — helps on
-                    slow machines)
+                    <input type="checkbox" id="fastSynth" checked />
+                    Fast synth
                 </label>
             </div>
+            <p class="note">
+                Not perfectly accurate, but true emulation requires a very
+                powerful PC. Takes effect when the synth boots and locks
+                afterwards.
+            </p>
             <progress id="progress" max="1" value="0"></progress>
             <span id="status"></span>
         </div>

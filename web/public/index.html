@@ -1,95 +1,89 @@
 <!doctype html>
 <html lang="en">
     <head>
+        <link rel="icon" href="data:," />
         <meta charset="utf-8" />
         <meta name="viewport" content="width=device-width, initial-scale=1" />
         <meta
             name="description"
-            content="S-MU2000 Web: the MU2000 tone generator in your browser, running the genuine firmware. Render MIDI files to WAV offline or play live from WebMIDI inputs."
+            content="S-MU2000 Web: the MU2000 tone generator in your browser — live playback and offline MIDI render."
         />
-        <meta name="author" content="tarboh" />
-        <meta name="theme-color" content="#14161a" />
-        <meta property="og:type" content="website" />
-        <meta property="og:title" content="S-MU2000 Web" />
-        <meta
-            property="og:description"
-            content="The MU2000 tone generator in your browser, running the genuine firmware. Offline MIDI render and live WebMIDI playback."
-        />
-        <meta property="og:image" content="mu_screenshot.png" />
         <title>S-MU2000 Web</title>
         <link rel="stylesheet" href="style.css" />
     </head>
     <body>
-        <h1>S-MU2000 Web</h1>
-        <p>
-            <a
-                class="project-link"
-                href="https://github.com/spessasus/S-MU2000"
-            >
-                <svg
-                    role="img"
-                    viewBox="0 0 24 24"
-                    xmlns="http://www.w3.org/2000/svg"
-                    aria-hidden="true"
-                >
-                    <path
-                        d="M12 .297c-6.63 0-12 5.373-12 12 0 5.303 3.438 9.8 8.205 11.385.6.113.82-.258.82-.577 0-.285-.01-1.04-.015-2.04-3.338.724-4.042-1.61-4.042-1.61C4.422 18.07 3.633 17.7 3.633 17.7c-1.087-.744.084-.729.084-.729 1.205.084 1.838 1.236 1.838 1.236 1.07 1.835 2.809 1.305 3.495.998.108-.776.417-1.305.76-1.605-2.665-.3-5.466-1.332-5.466-5.93 0-1.31.465-2.38 1.235-3.22-.135-.303-.54-1.523.105-3.176 0 0 1.005-.322 3.3 1.23.96-.267 1.98-.399 3-.405 1.02.006 2.04.138 3 .405 2.28-1.552 3.285-1.23 3.285-1.23.645 1.653.24 2.873.12 3.176.765.84 1.23 1.91 1.23 3.22 0 4.61-2.805 5.625-5.475 5.92.42.36.81 1.096.81 2.22 0 1.606-.015 2.896-.015 3.286 0 .315.21.69.825.57C20.565 22.092 24 17.592 24 12.297c0-6.627-5.373-12-12-12"
-                    />
-                </svg>
-                Project page on GitHub
-            </a>
-        </p>
+        <header>
+            <p class="eyebrow">WebAssembly port · audio only</p>
+            <h1>S-MU2000 Web</h1>
+            <p class="lede">
+                The MU2000 tone generator in your browser, running the genuine
+                firmware. Fully open source.
+            </p>
+        </header>
+
         <figure class="hero">
             <img
                 src="mu_screenshot.png"
-                alt="S-MU2000 desktop panel with LCD level meters"
+                alt="S-MU2000 synthesizer interface"
                 loading="lazy"
             />
             <figcaption class="note">
-                The desktop edition panel and LCD. The web edition is
-                audio-only — same synth, no panel.
+                The native player pictured above is available for Windows, macOS
+                and Linux Desktop.
             </figcaption>
         </figure>
-        <p>
-            S-MU2000 is a software tone generator modeled on the Yamaha
-            MU2000. It emulates the hardware internals (SH7043 CPU plus
-            two SWP30 tone-generator chips) and runs the genuine firmware
-            unmodified — so both the voices and the behavior come from
-            the real hardware, including the full XG voice set, drum
-            kits, and the MEG effect DSP.
-        </p>
-        <p>
-            Sound quality is checked against the real hardware, recorded
-            over S/PDIF and compared band by band: most of the 1353
-            tested voices and all system reverb/chorus types match within
-            fractions of a decibel. An unofficial project, not affiliated
-            with Yamaha. ROMs must be extracted by each user from their
-            own MU2000 and are never distributed with the project.
-        </p>
 
-        <h2>Demo</h2>
-        <p>
-            This page runs that same audio core in your browser as
-            WebAssembly. Everything happens locally: ROMs are picked
-            once, stored in your browser, and never uploaded anywhere.
-            Serve this directory over HTTP (for example
-            <code>npx -y serve dist</code>) — <code>file://</code>
-            cannot load the wasm module. Live playback renders in an
-            AudioWorklet and needs a fast desktop CPU; an opt-in Fast
-            synth trades a slight sound difference for realtime on slower
-            machines, while offline render always uses full emulation.
-        </p>
         <div class="choices">
+            <a class="card" href="live.html">
+                <p><span class="badge">Realtime</span></p>
+                <h2>Live playback</h2>
+                <p>Boot the synth, play it from WebMIDI inputs in realtime.</p>
+                <p class="meta">Needs a fast PC · Chromium for WebMIDI</p>
+            </a>
             <a class="card" href="render.html">
+                <p><span class="badge">Exact</span></p>
                 <h2>Offline render</h2>
                 <p>
                     Upload ROMs + a MIDI file, render to WAV, play or download.
                 </p>
+                <p class="meta">Same firmware as the native renderer</p>
             </a>
-            <a class="card" href="live.html">
-                <h2>Live playback</h2>
-                <p>Boot the synth, play it from WebMIDI inputs in realtime.</p>
+            <a
+                class="card"
+                href="https://github.com/tarboh/S-MU2000/blob/main/doc/manual.en.md"
+            >
+                <p><span class="badge">Desktop</span></p>
+                <h2>Download for desktop</h2>
+                <p>
+                    The full native player with its interface — build it
+                    yourself with the manual.
+                </p>
+                <p class="meta">Windows · Linux · macOS</p>
             </a>
         </div>
+
+        <div class="card">
+            <h2>Good to know</h2>
+            <ul class="ticks">
+                <li>
+                    ROMs stay on your machine — picked once, stored in the
+                    browser, never uploaded anywhere.
+                </li>
+                <li>
+                    The desktop version gives you the full GUI panel access and full control.
+                    This is just a demo.
+                </li>
+                <li>
+                    Live playback needs a powerful computer; offline render is
+                    exact on any machine.
+                </li>
+            </ul>
+        </div>
+
+        <footer>
+            <a class="project-link" href="https://github.com/tarboh/S-MU2000">
+                View source on GitHub ↗
+            </a>
+        </footer>
     </body>
 </html>

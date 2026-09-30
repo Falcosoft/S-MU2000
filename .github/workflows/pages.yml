@@ -2,6 +2,9 @@ name: Deploy Web Version to GitHub Pages
 
 on:
   workflow_dispatch:
+  # Runs on pushes targeting the default branch
+  push:
+    branches: [ "main" ]
 
 permissions:
   contents: read

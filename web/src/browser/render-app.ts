@@ -48,10 +48,12 @@ export async function init(): Promise<void> {
     const status = element("status", HTMLSpanElement);
     const player = element("player", HTMLAudioElement);
     const download = element("download", HTMLAnchorElement);
+    const result = element("result", HTMLElement);
 
     let midiFile: File | undefined;
     let module_: SmuModule | undefined;
     let isRendering = false;
+    let currentUrl: string | undefined;
 
     const setStatus = (text: string) => {
         status.textContent = text;
@@ -95,8 +97,16 @@ export async function init(): Promise<void> {
         if (isRendering || midiFile === undefined) return;
         isRendering = true;
         refreshButton(card.files);
+        // Clear the previous result so renders are reusable.
+        // The old object URL is revoked before a new one is minted.
+        if (currentUrl !== undefined) {
+            URL.revokeObjectURL(currentUrl);
+            currentUrl = undefined;
+        }
         player.removeAttribute("src");
         download.removeAttribute("href");
+        download.textContent = "Render something first";
+        result.hidden = true;
         setProgress(0);
 
         try {
@@ -203,11 +213,13 @@ export async function init(): Promise<void> {
                         type: "audio/wav"
                     })
                 );
+                currentUrl = url;
                 player.src = url;
                 download.href = url;
                 download.download =
                     midiFile.name.replace(/\.[^.]*$/, "") + ".wav";
                 download.textContent = `Download ${download.download}`;
+                result.hidden = false;
                 setProgress(1);
                 setStatus(
                     `Done: ${(wrote / rate).toFixed(1)} s, ${Number(emu._smu_scheduled_events())} events.`

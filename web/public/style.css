@@ -12,7 +12,76 @@ body {
 }
 
 h1 {
-    font-size: 1.4rem;
+    font-size: 1.75rem;
+    margin: 0 0 0.5rem;
+}
+
+header {
+    margin: 2.5rem 0 0;
+}
+
+.eyebrow {
+    text-transform: uppercase;
+    letter-spacing: 0.12em;
+    font-size: 0.75rem;
+    color: #7fb3e8;
+    margin: 0 0 0.5rem;
+}
+
+.lede {
+    font-size: 1.05rem;
+    color: #c9c9c9;
+    margin: 0;
+}
+
+.card h2 {
+    font-size: 1.05rem;
+    margin: 0 0 0.5rem;
+}
+
+.badge {
+    display: inline-block;
+    font-size: 0.72rem;
+    font-weight: 600;
+    letter-spacing: 0.08em;
+    text-transform: uppercase;
+    color: #9fd6ff;
+    border: 1px solid #2f5b8a;
+    background: #1a2c44;
+    border-radius: 999px;
+    padding: 0.15rem 0.65rem;
+    margin: 0 0 0.6rem;
+}
+
+.meta {
+    font-size: 0.8rem;
+    color: #8a8a8a;
+    margin: 0.6rem 0 0;
+}
+
+.ticks {
+    margin: 0;
+    padding-left: 1.2rem;
+    color: #bdbdbd;
+    font-size: 0.9rem;
+}
+
+.ticks li {
+    margin: 0.35rem 0;
+}
+
+.ticks code {
+    font-size: 0.85em;
+    background: #14161a;
+    border: 1px solid #333;
+    border-radius: 0.3rem;
+    padding: 0.05rem 0.35rem;
+}
+
+footer {
+    margin: 2rem 0 1rem;
+    font-size: 0.85rem;
+    color: #8a8a8a;
 }
 
 a {
@@ -177,7 +246,7 @@ progress::-moz-progress-bar {
 /* Landing page cards. */
 .choices {
     display: grid;
-    grid-template-columns: 1fr 1fr;
+    grid-template-columns: repeat(auto-fit, minmax(13rem, 1fr));
     gap: 1rem;
 }
 

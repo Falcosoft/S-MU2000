@@ -107,7 +107,7 @@ npm run harness:song -- /path/to/song.mid [--seconds 30] [--fast 0|1] [--roms ..
 
 Reports realtime factor, avg/max quantum ms, and overruns over the
 `~2.9 ms` quantum budget. Defaults are exact emulation with a 30 s
-cap, like the live page; pass `--fast 1` for the opt-in fast synth.
+cap; pass `--fast 1` for the fast synth (the live page default).
 The SMF parser covers tempo, `FF 21` port prefix, and the Yamaha
 port meta; files stay outside the repo.
 
