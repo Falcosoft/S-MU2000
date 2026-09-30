@@ -1031,7 +1031,7 @@ void svg_art::draw_image(ImDrawList *dl, const RECT &dst, double deg) const
 	}
 	if (native) {
 		// Native bytes, GPU scales. Upload once; resizes never touch it.
-		if (!t->valid()) {
+		if (!t->valid() || m_cache.w != base.w || m_cache.h != base.h) {
 			std::vector<uint32_t> px(size_t(base.w) * size_t(base.h));
 			for (size_t i = 0; i < px.size(); i++)
 				px[i] = unpremul(base.px[i]);
