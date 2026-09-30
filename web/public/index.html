@@ -1,0 +1,32 @@
+<!doctype html>
+<html lang="en">
+    <head>
+        <meta charset="utf-8" />
+        <meta name="viewport" content="width=device-width, initial-scale=1" />
+        <title>S-MU2000 Web</title>
+        <link rel="stylesheet" href="style.css" />
+    </head>
+    <body>
+        <h1>S-MU2000 Web</h1>
+        <p class="note">
+            The MU2000 tone generator in your browser, running the genuine
+            firmware. Everything is stored locally: ROMs persist in your browser
+            (IndexedDB) after the first pick, and nothing is ever uploaded
+            anywhere. Serve this directory over HTTP (for example
+            <code>npx -y serve dist</code>) — <code>file://</code> cannot load
+            the wasm module.
+        </p>
+        <div class="choices">
+            <a class="card" href="render.html">
+                <h2>Offline render</h2>
+                <p>
+                    Upload ROMs + a MIDI file, render to WAV, play or download.
+                </p>
+            </a>
+            <a class="card" href="live.html">
+                <h2>Live playback</h2>
+                <p>Boot the synth, play it from WebMIDI inputs in realtime.</p>
+            </a>
+        </div>
+    </body>
+</html>
