@@ -22,6 +22,7 @@
 #include "snapshot.h"
 #include "xg/model.h"
 #include "ui/draw_imgui.h"
+#include "ui/tex.h"
 
 #include <chrono>
 #include <memory>
@@ -100,6 +101,7 @@ public:
 	void set_grid(bool on) { m_grid = on; }
 	void set_lcd_only(bool on) { m_lcd_only = on; }
 
+
 	// **上に空ける高さ**（画素）。窓の最上段にボタンの帯を出す
 	// ときに使う（`ui/toolbar.h`）。絵は 1000 × 385 の全面を使っていて
 	// 空きが無いので、重ねると絵が隠れてしまう。**`resize()` をやり直すこと**
@@ -172,12 +174,19 @@ private:
 	// ---- LCD
 	// The dimensions inside the LCD window. d is the dot pitch, x0/y0 the top
 	// left of the upper face and sy the top of the lower one; fx0/fy0/fsy are
-	// the same numbers unrounded, which matters because a dot is only a few
-	// pixels and ImGui can draw it at a fractional size. The legends below the
-	// window take their positions from the same numbers, so the legend and the
-	// thing it names cannot drift apart.
+	// the same numbers unrounded. The legends below the window take their
+	// positions from the same numbers, so the legend and the thing it names
+	// cannot drift apart.
+	//
+	// df is the pitch the grid is actually laid out on, a multiple of 1/k, and
+	// k is how many times the LCD is drawn before being averaged back down (see
+	// supersample_lcd). Rounding df to whole pixels would leave up to a whole
+	// dot of blank margin -- a fifth of the window at the sizes you get at
+	// startup.
 	struct lcd_geom {
-		double d, pad;                 // dot pitch, border
+		int    d, pad;                 // dot pitch, border
+		double df;                     // dot pitch, a multiple of 1/k
+		int    k;                      // the magnification df is a multiple of
 		double fx0, fy0, fsy;
 		int    x0, y0, sy;             // the same, rounded to whole pixels
 		int    tick_h, line_h, scale_h;
@@ -188,8 +197,24 @@ private:
 	// The MIC and LINE boxes (MIC on top)
 	void lcd_tag_boxes(const lcd_geom &g, RECT out[2]) const;
 
+	// Where the LCD's fills land: the draw list at 1:1, or a k-times buffer
+	// that draw_lcd averages back down. The curved segments go into the draw
+	// list either way, so they stay smooth at 1:1.
+	struct lcd_canvas;
+	// Draw the LCD at k times its size and average each k x k block back down.
+	// Returns false if there is nowhere to put the result.
+	bool supersample_lcd(ImDrawList *dl, const snapshot &s, const lcd_geom &g,
+	                     int k) const;
+	// The averaged LCD picture. Sized on resize, re-filled every frame.
+	mutable std::unique_ptr<im::tex> m_lcd_tex;
+	// Its scratch too. These are big (w*k by h*k at k=3 is a couple of MB) and
+	// only change shape on a resize, so they are kept rather than allocated and
+	// freed every frame. Upstream creates two DIBs per frame instead.
+	mutable std::vector<uint32_t> m_lcd_big, m_lcd_flat;
+
 	void draw_lcd(ImDrawList *dl, const snapshot &s) const;
-	void draw_lcd_body(ImDrawList *dl, const snapshot &s, const lcd_geom &g) const;
+	void draw_lcd_body(lcd_canvas &cv, const snapshot &s, const lcd_geom &g,
+	                   const RECT &area, double px) const;
 	void draw_lcd_labels(ImDrawList *dl, const snapshot &s, const lcd_geom &g) const;
 	void draw_lcd_message(ImDrawList *dl, const snapshot &s) const;
 
@@ -266,6 +291,7 @@ private:
 	// キートップの記号（− ＋ ◀ ▶）。縁をぼかした絵。大きさが変わるたびに作る
 	std::shared_ptr<svg_art> m_key_sym[4];
 	int m_key_sym_px = 0;
+
 
 	bool   m_grid = false;
 	bool   m_lcd_only = false;

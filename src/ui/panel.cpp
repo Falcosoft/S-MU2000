@@ -464,7 +464,7 @@ void panel::resize(int w, int h)
 
 	// キートップの記号（− ＋ ◀ ▶）。大きさが変わるときだけ作り直す
 	{
-		const int S = std::max(6, int(std::lround(2 * std::max(3.0, 4.2 * m_scale) + 2)));
+		const int S = std::max(6, int(std::ceil(2 * std::max(3.0, 4.2 * m_scale) + 2)));
 		if (S != m_key_sym_px) {
 			for (int k = 0; k < 4; k++) {
 				int size = 0;
@@ -559,7 +559,7 @@ void panel::draw_tabs(ImDrawList *dl) const
 		                (sp.ctl == CTL_TAB_FX     && m_page == page::effects) ||
 		                (sp.ctl == CTL_TAB_FRONT  && m_page == page::front);
 		im::round_box(dl, sp.r, on ? RGB(70, 76, 84) : RGB(38, 41, 46),
-		              on ? ACCENT : RGB(70, 74, 80), float(4 * m_scale));
+		              on ? ACCENT : RGB(70, 74, 80), float(int(4 * m_scale)));
 		im::text_in(dl, im::pos_of(sp.r), im::size_of(sp.r), sp.label,
 		            on ? TEXT : TEXT_DIM, m_fonts.small, m_fonts.small_px, true, true, false);
 	}
@@ -576,20 +576,36 @@ panel::lcd_geom panel::lcd_grid() const
 {
 	lcd_geom g{};
 	const int aw = m_lcd.right - m_lcd.left, ah = m_lcd.bottom - m_lcd.top;
-	g.pad = std::max(1.0, 1.0 * m_scale);
+	g.pad = std::max(1, int(1 * m_scale));
 
 	const double fit = std::min(aw / LCD_SPAN, double(ah - g.pad * 2) / (24 + BAND));
-	g.d = std::max(1.0, fit);
+	const int d = std::max(1, int(fit));
+
+	// 拡大して描く倍率。点の格子を端数の大きさで描くために、点の間隔が
+	// 12 画素ほどになるまで整数倍にしてから平均を取る
+	//
+	// 端数にできると、3.8 画素入る窓が 3 画素に丸められず、LCD の中に空く
+	// 2 割の余白が消える（起動直後の大きさがちょうどそうだった）。reference は
+	// GDI が図形の縁をぼかせないのでこうなったが、こちらは同じことをできる。
+	// 使える大きさを k 倍に描いてから k × k で割る（supersample_lcd）
+	g.k = std::min(6, (12 + d - 1) / d);
+	double df = d;
+	if (g.k > 1)
+		df = std::max(double(d), std::floor(fit * g.k) / g.k);
+	g.df = df;
+	g.d = int(std::lround(df));
 
 	// 目盛りの帯。中の並びは band_y() の割合で決まる
-	g.scale_h = std::max(8.0, BAND * g.d);
-	g.tick_h  = std::max(1.0, BAND_NUM[0] * g.scale_h);
-	g.line_h  = std::max(3.0, (BAND_NUM[1] - BAND_NUM[0]) * g.scale_h);
+	g.scale_h = std::max(8, int(std::lround(BAND * df)));
+	g.tick_h  = std::max(1, int(std::lround(BAND_NUM[0] * g.scale_h)));
+	g.line_h  = std::max(3, int(std::lround((BAND_NUM[1] - BAND_NUM[0]) * g.scale_h)));
 
-	// 点は正方形のままにして、余った幅は左右に振り分ける
-	g.fx0 = m_lcd.left + std::max(0.0, (aw - LCD_SPAN * g.d) / 2) + LCD_LEFT * g.d;
-	g.fy0 = m_lcd.top + std::max(g.pad, (ah - (24 * g.d + g.scale_h)) / 2);
-	g.fsy = g.fy0 + 16 * g.d + g.scale_h;
+	// 点は正方形のままにして、余った幅は左右に振り分ける。端数は 1/k 画素に
+	// 丸める（拡大した絵の画素の境目に乗るように）
+	auto q = [&](double v) { return std::round(v * g.k) / g.k; };
+	g.fx0 = q(m_lcd.left + std::max(0.0, (aw - LCD_SPAN * df) / 2) + LCD_LEFT * df);
+	g.fy0 = q(m_lcd.top + std::max(double(g.pad), (ah - (24 * df + g.scale_h)) / 2));
+	g.fsy = g.fy0 + 16 * df + g.scale_h;
 	g.x0 = int(std::lround(g.fx0));
 	g.y0 = int(std::lround(g.fy0));
 	g.sy = int(std::lround(g.fsy));
@@ -598,17 +614,146 @@ panel::lcd_geom panel::lcd_grid() const
 
 int panel::band_y(const lcd_geom &g, double f) const
 {
-	return int(std::lround(g.fy0 + 16 * g.d + f * g.scale_h));
+	return int(std::lround(g.fy0 + 16 * g.df + f * g.scale_h));
 }
 
 void panel::lcd_tag_boxes(const lcd_geom &g, RECT out[2]) const
 {
 	// 横は A1 A2 のマス（5.6 点ぶん）。縦は目盛りの帯の中の決まった割合
-	const double d = g.d;
+	const double d = g.df;
 	const int l = int(std::lround(g.fx0 - 0.1 * d));
 	const int r = int(std::lround(g.fx0 + 5.5 * d));
 	out[0] = RECT{ l, band_y(g, BAND_MIC[0]),  r, band_y(g, BAND_MIC[1]) };
 	out[1] = RECT{ l, band_y(g, BAND_LINE[0]), r, band_y(g, BAND_LINE[1]) };
+}
+
+// Where the LCD's fills go. The dot grid and the fixed segments are whole
+// pixels, so they can go either straight into the draw list (k == 1) or into a
+// k-times buffer we average back down. The polygons are the exception -- they
+// are the parts that stay smooth at 1:1 -- so those always go into the draw
+// list, already divided by k and moved onto the screen.
+struct panel::lcd_canvas {
+	ImDrawList           *dl = nullptr;   // polygons always; fills too at 1:1
+	std::vector<uint32_t> px;            // fills, when magnifying
+	int                   w = 0, h = 0;   // px is w * h, 0xFFRRGGBB
+	double                sk = 1.0;       // k-space -> screen, for the polygons
+	double                ox = 0, oy = 0;
+
+	bool magnified() const { return !px.empty(); }
+
+	// GDI's FillRect: whole pixels, [l,r) x [t,b), clipped to the target
+	void rect(int l, int t, int r, int b, COLORREF c)
+	{
+		if (!magnified()) {
+			im::fill(dl, ImVec2(float(l), float(t)),
+			         ImVec2(float(r - l), float(b - t)), c);
+			return;
+		}
+		l = std::max(l, 0);
+		t = std::max(t, 0);
+		r = std::min(r, w);
+		b = std::min(b, h);
+		const uint32_t v = 0xff000000u | (uint32_t(GetRValue(c)) << 16) |
+		                   (uint32_t(GetGValue(c)) << 8) | uint32_t(GetBValue(c));
+		for (int y = t; y < b; y++)
+			std::fill(px.begin() + size_t(y) * w + l, px.begin() + size_t(y) * w + r, v);
+	}
+
+	// 曲線は等倍で描くので、ここでは溜めておく。拡大した絵を貼り終えてから
+	// 重ねる（先に描くと、貼った絵に覆盖されてしまう）
+	struct shape {
+		COLORREF        ink;
+		std::vector<ImVec2> pts;
+	};
+	std::vector<shape> shapes;
+	void flush_shapes()
+	{
+		for (const shape &sh : shapes)
+			dl->AddConcavePolyFilled(sh.pts.data(), int(sh.pts.size()), im::col(sh.ink));
+		shapes.clear();
+	}
+};
+
+// Render the LCD at k times its size and average each k x k block back down.
+//
+// This is the reference's own trick, and it is what makes a dot pitch finer
+// than a pixel expressible. GDI cannot soften the edge of a fractional
+// rectangle at all, so the pitch has to become a whole number of k-pixels, and
+// 1/k of a pixel is the finest that gives. ImGui softens edges, but only by a
+// fixed half pixel -- too coarse for a gap of DOT_GAP * d, which is a fraction
+// of a pixel, and it rounds dot widths to whole pixels as it goes. Drawing at k
+// times and averaging has neither problem, and it is the same arithmetic the
+// reference uses rather than an emulation of it.
+//
+// Returns false when there is no context or no texture, and the caller falls
+// back to drawing at 1:1.
+bool panel::supersample_lcd(ImDrawList *dl, const snapshot &s, const lcd_geom &g,
+                            int k) const
+{
+	const int w = m_lcd.right - m_lcd.left, h = m_lcd.bottom - m_lcd.top;
+	if (k <= 1 || w <= 0 || h <= 0)
+		return false;
+
+	lcd_canvas big;
+	big.dl = dl;
+	m_lcd_big.assign(size_t(w) * k * size_t(h) * k, 0xff000000u | (uint32_t(LCD_BACK) & 0xffffffu));
+	big.px.swap(m_lcd_big);
+	big.w = w * k;
+	big.h = h * k;
+	// The polygons come out of draw_lcd_body already on the screen, so the
+	// mapping has to be set before it runs
+	big.sk = 1.0 / k;
+	big.ox = m_lcd.left;
+	big.oy = m_lcd.top;
+
+	// 拡大した座標で描く。原点は LCD の左上
+	lcd_geom gk = g;
+	gk.d = int(std::lround(g.df * k));
+	gk.pad = g.pad * k;
+	gk.x0 = int(std::lround((g.fx0 - m_lcd.left) * k));
+	gk.y0 = int(std::lround((g.fy0 - m_lcd.top) * k));
+	gk.sy = gk.y0 + 16 * gk.d + g.scale_h * k;
+	gk.tick_h = g.tick_h * k;
+	gk.line_h = g.line_h * k;
+	gk.scale_h = g.scale_h * k;
+	draw_lcd_body(big, s, gk, RECT{ 0, 0, big.w, big.h }, double(k));
+
+	// k × k の平均
+	m_lcd_flat.resize(size_t(w) * h);
+	uint32_t *flat = m_lcd_flat.data();
+	const int n = k * k;
+	for (int y = 0; y < h; y++)
+		for (int x = 0; x < w; x++) {
+			unsigned r = 0, gg = 0, b = 0;
+			for (int yy = 0; yy < k; yy++) {
+				const uint32_t *row = big.px.data() + size_t(y * k + yy) * big.w + size_t(x) * k;
+				for (int xx = 0; xx < k; xx++) {
+					b  += row[xx] & 0xff;
+					gg += (row[xx] >> 8) & 0xff;
+					r  += (row[xx] >> 16) & 0xff;
+				}
+			}
+			flat[size_t(y) * w + x] = 0xff000000u | (((r + n / 2) / n) << 16) |
+			                          (((gg + n / 2) / n) << 8) | ((b + n / 2) / n);
+		}
+
+	if (!m_lcd_tex)
+		m_lcd_tex.reset(new im::tex);
+	// The size follows the window, so it has to be part of the test: a texture
+	// from before the resize would be stretched over the new rectangle and draw
+	// the old picture in the wrong place (svg.cpp's m_cache does the same).
+	const bool ok = m_lcd_tex->valid() && m_lcd_tex->width() == w && m_lcd_tex->height() == h
+	                    ? m_lcd_tex->refresh(m_lcd_flat)
+	                    : m_lcd_tex->upload(w, h, m_lcd_flat);
+	if (!ok || !m_lcd_tex->valid())
+		return false;
+	dl->AddImage(m_lcd_tex->ref(), ImVec2(float(m_lcd.left), float(m_lcd.top)),
+	             ImVec2(float(m_lcd.right), float(m_lcd.bottom)));
+	// セグメントは描き上がった LCD の上に、画面の画素で縁をぼかして塗る。
+	// 窓の大きさや拡大の有無によらず、円弧や斜めの線がギザギザにならない
+	big.flush_shapes();
+	m_lcd_big.swap(big.px);   // keep it for the next frame
+	return true;
 }
 
 void panel::draw_lcd(ImDrawList *dl, const snapshot &s) const
@@ -618,10 +763,20 @@ void panel::draw_lcd(ImDrawList *dl, const snapshot &s) const
 		const int inflate = int(5 * m_scale);
 		bez.left -= inflate; bez.top -= inflate;
 		bez.right += inflate; bez.bottom += inflate;
-		im::round_box(dl, bez, RGB(60, 58, 52), RGB(110, 106, 96), float(5 * m_scale));
+		im::round_box(dl, bez, RGB(60, 58, 52), RGB(110, 106, 96), float(int(5 * m_scale)));
 	}
 	const lcd_geom g = lcd_grid();
-	draw_lcd_body(dl, s, g);
+
+	// セグメントは描き上がった LCD の上に、画面の画素で縁をぼかして塗る。
+	// 窓の大きさや拡大の有無によらず、円弧や斜めの線がギザギザにならない
+	if (g.k > 1 && supersample_lcd(dl, s, g, g.k)) {
+		// the average and the segments are both on the screen now
+	} else {
+		lcd_canvas cv;
+		cv.dl = dl;
+		draw_lcd_body(cv, s, g, m_lcd, 1.0);
+		cv.flush_shapes();
+	}
 	draw_lcd_labels(dl, s, g);
 	draw_lcd_message(dl, s);
 }
@@ -640,9 +795,19 @@ void panel::draw_lcd_labels(ImDrawList *dl, const snapshot &s, const lcd_geom &g
 	const lcd_ink pal = lcd_palette(s.contrast);
 	const COLORREF LCD_ON = pal.dot, LCD_OFF = pal.ghost;
 	// 札は等倍で描くので、端数つきの寸法から画素に丸める
-	const double d = g.d, fx0 = g.fx0;
+	const double d = g.df, fx0 = g.fx0;
 	const int tick_h = int(std::lround(g.tick_h)), line_h = int(std::lround(g.line_h));
 	const int scale_y = int(std::lround(g.fy0 + 16 * d));
+	// 目盛りの数字と BANK/PGM# は 1 画素ぶん下げる。reference の字より 1 画素
+	// ぶん上にずれるため。大きさを求める式は reference と同じで、面板の
+	// ほかの字（label / small / key）はずれない。
+	//
+	// ただしこれは 8 画素くらいの大きさでの差で、窓の大きさによって札の
+	// 高さも変わる（Windows では 7 画素になる窓と 8 画素になる窓がある）。
+	// MIC/LINE に同じ補正を入れると 1 画素ぶんの overshoot になった。
+	// tag と num で差の向きが違うので、ずれた分だけ数字を足すのはやめて、
+	// MIC/LINE は補正なし（下のコメント）
+	const int LABEL_DY = 1;
 	auto px = [](double v) { return int(std::lround(v)); };
 	auto ctl = [&](int col, int row) { return lcd_ctl(s, col, row); };
 
@@ -665,10 +830,10 @@ void panel::draw_lcd_labels(ImDrawList *dl, const snapshot &s, const lcd_geom &g
 			const int part = i - 1;
 			char n[8];
 			std::snprintf(n, sizeof(n), i < 2 ? "A%d" : "%d", i < 2 ? i + 1 : part);
-			RECT t{ bx - px(1.5 * d), scale_y + tick_h,
-			        bx + px(1.5 * d), scale_y + tick_h + line_h };
+			RECT t{ bx - px(1.5 * d), scale_y + tick_h + LABEL_DY,
+			        bx + px(1.5 * d), scale_y + tick_h + line_h + LABEL_DY };
 			im::text_cap(dl, t, n, i < 2 ? ink_a1a2 : ink_scale,
-			             m_fonts.num, m_fonts.num_px, true);
+			             m_fonts.num, m_fonts.num_px, true, true);
 		}
 
 		// MIC と LINE は左端に上下に並ぶ。実機は**黒い箱に白抜き**の字で、
@@ -678,11 +843,17 @@ void panel::draw_lcd_labels(ImDrawList *dl, const snapshot &s, const lcd_geom &g
 			lcd_tag_boxes(g, box);
 			const char *name[2] = { "MIC", "LINE" };
 			const bool on[2] = { ctl(CD, 1), ctl(CD, 2) };
-			const double rad = std::max(2.0, 0.5 * d);
+			const double rad = std::max(2, int(std::lround(0.5 * d)));
 			for (int k = 0; k < 2; k++) {
 				const COLORREF face = on[k] ? LCD_ON : LCD_OFF;
 				const COLORREF ink  = on[k] ? LCD_BACK : mix(LCD_OFF, LCD_BACK, 0.6);
 				im::round_box(dl, box[k], face, face, float(rad));
+				// 上下に動かさない。reference も DT_VCENTER を使わず、箱の
+				// 真ん中に大文字の見える部分を合わせているので、ここも cap を
+				// 真ん中に置く形が同じ。札の大きさを求める式も reference と
+				// 同じで、残る差は書体の ascent と cap の割合（reference は
+				// Segoe UI、こちらは別の書体）。目盛りの数字に足している
+				// 補正をここにも入れると 1 画素ぶん overshoot になるので入れない
 				im::text_cap(dl, box[k], name[k], ink, m_fonts.tag, m_fonts.tag_px, true);
 			}
 		}
@@ -696,17 +867,22 @@ void panel::draw_lcd_labels(ImDrawList *dl, const snapshot &s, const lcd_geom &g
 		for (const auto &mk : marks) {
 			const int cx = px(fx0 + (part_x(mk.part) + part_x(mk.part + 1) + 2) * d / 2);
 			const int w = int(26 * m_scale);
-			RECT r{ cx - w / 2, band_y(g, BAND_MIC[0]), cx + w / 2, band_y(g, BAND_MIC[1]) };
+			RECT r{ cx - w / 2, band_y(g, BAND_MIC[0]) + LABEL_DY,
+			       cx + w / 2, band_y(g, BAND_MIC[1]) + LABEL_DY };
+			// DT_VCENTER と同じ（行の高さの真ん中に置く）
 			im::text_cap(dl, r, mk.label,
 			             ctl(CD, mk.right ? 5 : 0) ? LCD_ON : LCD_OFF,
-			             m_fonts.tag, m_fonts.tag_px, true);
+			             m_fonts.tag, m_fonts.tag_px, true, true);
 		}
 	}
 }
 
-void panel::draw_lcd_body(ImDrawList *dl, const snapshot &s, const lcd_geom &g) const
+// 点の間隔は gk.d。点はすべて整数座標の四角形になる：reference も同じことを
+// しており、拡大してから平均するなら途中の整数が同じでないと縮んだ結果も違う
+void panel::draw_lcd_body(lcd_canvas &cv, const snapshot &s, const lcd_geom &g,
+                          const RECT &area, double px) const
 {
-	im::fill(dl, m_lcd, LCD_BACK);
+	cv.rect(area.left, area.top, area.right, area.bottom, LCD_BACK);
 	// 色はコントラストしだい。ここから下の LCD_ON / LCD_OFF はこの色
 	const lcd_ink pal = lcd_palette(s.contrast);
 	const COLORREF LCD_ON = pal.dot, LCD_OFF = pal.ghost;
@@ -723,7 +899,7 @@ void panel::draw_lcd_body(ImDrawList *dl, const snapshot &s, const lcd_geom &g) 
 	//     20-22（両行）   楽器のかたち。**点が細かく、正方形でもない**
 	//     **23（両行）は絵ではない**。決まった形のセグメントを点けたり
 	//     消したりする 64 個のビットが入っている（下の ctl）
-	const double d = g.d, x0 = g.fx0, y0 = g.fy0;
+	const int d = g.d, x0 = g.x0, y0 = g.y0;
 
 	const COLORREF FAINT = pal.faint;                      // 絵の区画の消え点
 
@@ -731,43 +907,29 @@ void panel::draw_lcd_body(ImDrawList *dl, const snapshot &s, const lcd_geom &g) 
 	// 隙間が 1 画素に満たないときは、その 1 画素を背景と混ぜた色で塗る。
 	// 小さい窓で隙間が丸ごと 1 画素になり、文字が薄く見えていたのを防ぐ
 	const double gap = DOT_GAP * d;
-	auto dotbox = [&](double l, double t, double w, double h, COLORREF ink,
-	                  double gp = -1.0) {
-		// No fringe while dots are small. It bleeds 0.5 px past every edge, so
-		// in a direction under 2 px it merges with the neighbour into solid
-		// black. GDI's FillRect has no fringe either, so small dots match it;
-		// large ones keep their smoothing.
-		const unsigned aa = dl->Flags & ImDrawListFlags_AntiAliasedFill;
-		if (std::min(w, h) < 2.0)
-			dl->Flags &= ~ImDrawListFlags_AntiAliasedFill;
+	auto dotbox = [&](int l, int t, int w, int h, COLORREF ink, double gp = -1.0) {
 		if (gp < 0)
 			gp = gap;
 		const int gi = int(gp);
 		const double fr = gp - gi;
 		const bool part = fr > 0.05;
-		const double sw = std::max(0.0, w - gi - (part ? 1.0 : 0.0));
-		const double sh = std::max(0.0, h - gi - (part ? 1.0 : 0.0));
-		// The gap strips are always drawn, even under 1 px dots, so the
-		// divisions never vanish into solid black in a small window
-		if (sw > 0 && sh > 0)
-			im::fill(dl, ImVec2(float(l), float(t)), ImVec2(float(sw), float(sh)), ink);
-		if (!part) {
-			dl->Flags |= aa;
+		const int sw = w - gi - (part ? 1 : 0), sh = h - gi - (part ? 1 : 0);
+		// 小さすぎる。隙間なしで塗る
+		if (sw < 1 || sh < 1) {
+			cv.rect(l, t, l + std::max(1, w), t + std::max(1, h), ink);
 			return;
 		}
-		// Clip the strips to the cell; the neighbour repaints the overlap
-		const double rw = std::min(1.0, std::max(0.0, w - sw));
-		const double bh = std::min(1.0, std::max(0.0, h - sh));
+		cv.rect(l, t, l + sw, t + sh, ink);
+		if (!part)
+			return;
+		// 隙間が 1 画素に満たないときは、その 1 画素を背景と混ぜた色で塗る
 		const COLORREF edge = mix(ink, LCD_BACK, fr);
-		if (rw > 0 && sh > 0)
-			im::fill(dl, ImVec2(float(l + sw), float(t)), ImVec2(float(rw), float(sh)), edge);
-		if (sw > 0 && bh > 0)
-			im::fill(dl, ImVec2(float(l), float(t + sh)), ImVec2(float(sw), float(bh)), edge);
-		if (rw > 0 && bh > 0)
-			im::fill(dl, ImVec2(float(l + sw), float(t + sh)), ImVec2(float(rw), float(bh)),
-			         mix(ink, LCD_BACK, 1.0 - (1.0 - fr) * (1.0 - fr)));
-		dl->Flags |= aa;
+		cv.rect(l + sw, t, l + sw + 1, t + sh, edge);
+		cv.rect(l, t + sh, l + sw, t + sh + 1, edge);
+		cv.rect(l + sw, t + sh, l + sw + 1, t + sh + 1,
+		        mix(ink, LCD_BACK, 1.0 - (1.0 - fr) * (1.0 - fr)));
 	};
+
 
 	// 角度は真上が 0 度で時計回り
 	struct pt { double x, y; };
@@ -784,37 +946,41 @@ void panel::draw_lcd_body(ImDrawList *dl, const snapshot &s, const lcd_geom &g) 
 	// the convex hull, which fills the middle in and turns every arc and every
 	// ring into a solid blob.
 	std::vector<ImVec2> poly_pts;
+	// これらの多角形は等倍で描くので、k 倍の座標なら 1/k にして画面へ移す
 	auto poly = [&](std::initializer_list<pt> ps, COLORREF ink) {
-		poly_pts.clear();
+		lcd_canvas::shape sh;
+		sh.ink = ink;
 		for (const pt &p : ps)
-			poly_pts.emplace_back(float(p.x), float(p.y));
-		dl->AddConcavePolyFilled(poly_pts.data(), int(poly_pts.size()), im::col(ink));
+			sh.pts.emplace_back(float(cv.ox + p.x * cv.sk), float(cv.oy + p.y * cv.sk));
+		cv.shapes.push_back(std::move(sh));
 	};
 	auto ring = [&](double cx, double cy, double r0, double r1, double a0, double a1,
 	                COLORREF ink) {
 		// 大きく描いても角が見えないよう、2 度きざみで折る
 		const int n = std::max(8, std::min(180, int((a1 - a0) / 2)));
-		poly_pts.clear();
+		lcd_canvas::shape sh;
+		sh.ink = ink;
 		for (int i = 0; i <= n; i++) {
 			const pt p = polar(cx, cy, r1, a0 + (a1 - a0) * i / n);
-			poly_pts.emplace_back(float(p.x), float(p.y));
+			sh.pts.emplace_back(float(cv.ox + p.x * cv.sk), float(cv.oy + p.y * cv.sk));
 		}
 		for (int i = n; i >= 0; i--) {
 			const pt p = polar(cx, cy, r0, a0 + (a1 - a0) * i / n);
-			poly_pts.emplace_back(float(p.x), float(p.y));
+			sh.pts.emplace_back(float(cv.ox + p.x * cv.sk), float(cv.oy + p.y * cv.sk));
 		}
-		dl->AddConcavePolyFilled(poly_pts.data(), int(poly_pts.size()), im::col(ink));
+		cv.shapes.push_back(std::move(sh));
 	};
 
 	auto ctl = [&](int col, int row) { return lcd_ctl(s, col, row); };
 
-	// 1 マスぶんの点を描く。p は点の間隔（端数もよい。各点の端を丸めて並べる）
-	auto cell = [&](int row, int col, double px, double py, double p) {
+	// 1 マスぶんの点を描く。p は点の間隔（端数でもよい。各点の端を丸めて並べる）
+	auto cell = [&](int row, int col, double px_, double py_, double p) {
 		const u8 *c = s.dots + (row * LCD_COLS + col) * CELL_H;
+		auto at = [](double v) { return int(std::lround(v)); };
 		for (int y = 0; y < CELL_H; y++)
 			for (int x = 0; x < CELL_W; x++) {
-				const double l = px + x * p, t = py + y * p;
-				dotbox(l, t, p, p,
+				const int l = at(px_ + x * p), t = at(py_ + y * p);
+				dotbox(l, t, at(px_ + (x + 1) * p) - l, at(py_ + (y + 1) * p) - t,
 				       (s.lcd_on && BIT(c[y], 4 - x)) ? LCD_ON : LCD_OFF, DOT_GAP * p);
 			}
 	};
@@ -825,10 +991,10 @@ void panel::draw_lcd_body(ImDrawList *dl, const snapshot &s, const lcd_geom &g) 
 			cell(row, col, x0 + col * (CELL_W + 1) * d, y0 + row * CELL_H * d, d);
 
 	// ---- 下の面
-	const double sy = g.fsy;
-	const double seg_h = 8 * d;                      // 文字 1 行ぶんの高さ
-	auto lx = [&](int which) { return x0 + m_lay.low_x[which] * d; };
-	auto lw = [&](int which) { return m_lay.low_w[which] * d; };
+	const int sy = g.sy;
+	const int seg_h = 8 * d;                          // 文字 1 行ぶんの高さ
+	auto lx = [&](int which) { return x0 + int(std::lround(m_lay.low_x[which] * d)); };
+	auto lw = [&](int which) { return int(std::lround(m_lay.low_w[which] * d)); };
 
 	// 部の番号「01」と「A01」（「 A/D1」なども同じ 5 桁）。点は下の面の大きさ。
 	// 実機の字間は 1 桁目と 2 桁目が 1 点、2 桁目と 3 桁目が 2 点、あとは 1 点。
@@ -842,24 +1008,23 @@ void panel::draw_lcd_body(ImDrawList *dl, const snapshot &s, const lcd_geom &g) 
 	// 楽器のかたち。20-22 桁の両行が 1 枚の絵。**23 桁目は絵ではない**ので入れない。
 	// 点は横長で、文字の点と同じくほんのわずかに隙間がある
 	{
-		const double ix = lx(LOW_ICON), iw = lw(LOW_ICON);
+		const int ix = lx(LOW_ICON), iw = lw(LOW_ICON);
 		const int first = TOP_COLS + 3, last = LCD_COLS - 1;   // 20-22
 		const int nx = (last - first) * CELL_W, ny = LCD_ROWS * CELL_H;
-		const double gp = DOT_GAP * std::min(iw / nx, seg_h / ny);
+		// ここの除算は整数のまま。reference も k 倍の座標で割ってから描く
 		for (int row = 0; row < LCD_ROWS; row++)
 			for (int col = first; col < last; col++) {
 				const u8 *c = s.dots + (row * LCD_COLS + col) * CELL_H;
 				for (int y = 0; y < CELL_H; y++) {
 					const int yy = row * CELL_H + y;
-					const double top = sy + yy * seg_h / ny;
-					const double bot = sy + (yy + 1) * seg_h / ny;
+					const int top = sy + yy * seg_h / ny;
+					const int bot = sy + (yy + 1) * seg_h / ny;
 					for (int x = 0; x < CELL_W; x++) {
 						const int xx = (col - first) * CELL_W + x;
-						const double left  = ix + xx * iw / nx;
-						const double right = ix + (xx + 1) * iw / nx;
-						dotbox(left, top, std::max(1.0, right - left),
-						       std::max(1.0, bot - top),
-						       (s.lcd_on && BIT(c[y], 4 - x)) ? LCD_ON : FAINT, gp);
+						const int left  = ix + xx * iw / nx;
+						const int right = ix + (xx + 1) * iw / nx;
+						dotbox(left, top, std::max(1, right - left), std::max(1, bot - top),
+						       (s.lcd_on && BIT(c[y], 4 - x)) ? LCD_ON : FAINT);
 					}
 				}
 			}
@@ -871,6 +1036,9 @@ void panel::draw_lcd_body(ImDrawList *dl, const snapshot &s, const lcd_geom &g) 
 		auto ink = [&](bool on) { return on ? LCD_ON : LCD_OFF; };
 		const double dd = d;
 		const double dv = LOW_DOT * dd;   // 下の面の高さは下の面の点の間隔で測ってある
+		// 細い線は、縮めたあとでも 1 画素（px）を下回らないようにする。
+		// 下回ると色が薄まって、小さい窓では見えなくなる
+		auto thick = [&](double t) { return std::max(t, px); };
 		// 7 セグメント。seg は a b c d e f g の順のビット。
 		// 実機のセグメントは端が斜めに切れた台形で、真ん中の g は両端がとがる
 		auto seven = [&](double x, double y, double w, double h, double t, unsigned seg) {
@@ -905,7 +1073,7 @@ void panel::draw_lcd_body(ImDrawList *dl, const snapshot &s, const lcd_geom &g) 
 			const double cy = sy + 8.4 * dv;
 			for (int k = 0; k < 8; k++) {
 				const double r = (1.45 + 1.0 * k) * dd;
-				ring(cx, cy, r - 0.21 * dd, r + 0.21 * dd, -22.5, 22.5, ink(on8[k]));
+				ring(cx, cy, r - thick(0.42 * dd) / 2, r + thick(0.42 * dd) / 2, -22.5, 22.5, ink(on8[k]));
 			}
 		};
 
@@ -919,17 +1087,16 @@ void panel::draw_lcd_body(ImDrawList *dl, const snapshot &s, const lcd_geom &g) 
 			// 揃う。太さの端数は、どの棒も同じだけ下の縁がぼける
 			const double want = 8.3 * dv / 8;
 			const double pitch = std::max(1.0, std::round(want));
-			const double bar = std::max(1.0, std::round(0.48 * pitch));
+			const int bar = std::max(1, int(std::lround(thick(0.48 * pitch))));
 			const double start = std::round(sy - 0.5 * dv + 4 * (want - pitch));
 			for (int y = 0; y < CELL_H; y++) {
-				const double top = start + y * pitch;
-				const double bot = top + bar;
+				// 棒の上端も画素の境目に揃える。太さが揃うため
+				const int top = int(std::lround(start + y * pitch));
+				const int bot = top + bar;
 				const bool vol = s.lcd_on && (BIT(c[y], 4) || BIT(c[y], 3));
 				const bool exp = s.lcd_on && (BIT(c[y], 1) || BIT(c[y], 0));
-				im::fill(dl, ImVec2(float(lx(LOW_VOL)), float(top)),
-				         ImVec2(float(lw(LOW_VOL)), float(bot - top)), ink(vol));
-				im::fill(dl, ImVec2(float(lx(LOW_EXP)), float(top)),
-				         ImVec2(float(lw(LOW_EXP)), float(bot - top)), ink(exp));
+				cv.rect(lx(LOW_VOL), top, lx(LOW_VOL) + lw(LOW_VOL), bot, ink(vol));
+				cv.rect(lx(LOW_EXP), top, lx(LOW_EXP) + lw(LOW_EXP), bot, ink(exp));
 			}
 		}
 
@@ -939,8 +1106,8 @@ void panel::draw_lcd_body(ImDrawList *dl, const snapshot &s, const lcd_geom &g) 
 			const double cx = lx(LOW_PAN) + lw(LOW_PAN) / 2.0, cy = sy + 3.75 * dv;
 			const double r = 3.6 * dd;
 			// 円弧は点けたり消したりしない（実機はいつも点いている）
-			ring(cx, cy, r - 0.25 * dd, r, -124.0, 124.0, ink(s.lcd_on));
-			const double r0 = 0.29 * r, r1 = 0.72 * r, ht = 0.18 * dd;
+			ring(cx, cy, r - thick(0.25 * dd), r, -124.0, 124.0, ink(s.lcd_on));
+			const double r0 = 0.29 * r, r1 = 0.72 * r, ht = thick(0.36 * dd) / 2;
 			for (int k = 0; k < 7; k++) {
 				const bool on = ctl(CD, 15 - k);
 				const double a = -135.0 + 45.0 * k;
@@ -967,11 +1134,11 @@ void panel::draw_lcd_body(ImDrawList *dl, const snapshot &s, const lcd_geom &g) 
 		// ノートシフト。符号（横棒は常時、縦棒が点くと ＋）と 2 桁。
 		// 符号の縦棒は、横棒と交わるところで少し途切れている
 		{
-			const double t  = 0.4 * dd;
+			const double t  = thick(0.4 * dd);
 			const double dh = 5.4 * dv, dy = sy + 2.2 * dv, dw = 2.6 * dd;
 			const double kx = lx(LOW_KEY);
 			const double sw = 2.4 * dd, cy = dy + dh / 2, vh = 0.62 * dh;
-			const double vx = kx + sw / 2, cut = std::max(0.5, 0.3 * dd);
+			const double vx = kx + sw / 2, cut = std::max(1.0, 0.3 * dd);
 			poly({ { kx, cy - t / 2 }, { kx + sw, cy - t / 2 }, { kx + sw, cy + t / 2 },
 			       { kx, cy + t / 2 } }, ink(ctl(CB, 0)));
 			const bool plus = ctl(CA, 0);
@@ -1016,8 +1183,8 @@ void panel::draw_lcd_body(ImDrawList *dl, const snapshot &s, const lcd_geom &g) 
 		// 下の面の上に出る ▼ のカーソル。いま何を弄っているかを示す
 		{
 			// 先は下の面より少し上。VOL の棒や扇のいちばん上に掛からないように
-			const double cur_y = sy - std::max(2.0, 1.6 * LOW_DOT * d);
-			const double hw = std::max(2.0, d);
+			const double cur_y = double(sy) - std::max(2, int(std::lround(1.6 * LOW_DOT * d)));
+			const double hw = std::max(2, int(d));
 			struct { int at; bool on; } cur[] = {
 				{ LOW_VOL,  ctl(CC, 3) }, { LOW_EXP, ctl(CC, 4) },
 				{ LOW_PAN,  ctl(CC, 5) }, { LOW_REV, ctl(CC, 6) },
@@ -1034,7 +1201,7 @@ void panel::draw_lcd_body(ImDrawList *dl, const snapshot &s, const lcd_geom &g) 
 			// バンク番号とプログラム番号のカーソルは**楽器のかたちの上**。
 			// バンクは 4-5 列目、プログラムは 12-13 列目の上（実機を見て教わった）
 			const double ix = lx(LOW_ICON);
-			const double tops[2] = { ix + (3 + 5) * d / 2, ix + (11 + 13) * d / 2 };
+			const double tops[2] = { double(ix + (3 + 5) * int(d) / 2), double(ix + (11 + 13) * int(d) / 2) };
 			const bool ton[2] = { ctl(CC, 1), ctl(CC, 0) };
 			for (int k = 0; k < 2; k++) {
 				if (!ton[k])
@@ -1048,7 +1215,7 @@ void panel::draw_lcd_body(ImDrawList *dl, const snapshot &s, const lcd_geom &g) 
 
 void panel::draw_button(ImDrawList *dl, const spot &sp, bool down) const
 {
-	im::round_box(dl, sp.r, down ? KEY_DOWN : KEY_FACE, KEY_EDGE, float(3 * m_scale));
+	im::round_box(dl, sp.r, down ? KEY_DOWN : KEY_FACE, KEY_EDGE, float(int(3 * m_scale)));
 }
 
 // 大きなダイヤル。回した角度で窪みが回る
@@ -1141,7 +1308,7 @@ void panel::draw_key_print(ImDrawList *dl, const RECT &key, const char *label,
 		// Whole pixels: GDI blitted this bitmap 1:1, and a fractional offset
 		// turns the GPU's bilinear filter into a blur on an 8 px picture.
 		const int S = m_key_sym_px;
-		const int x = int(std::lround(cx - S / 2.0)), y = int(std::lround(cy - S / 2.0));
+		const int x = cx - S / 2, y = cy - S / 2;
 		m_key_sym[kind]->draw(dl, RECT{ x, y, x + S, y + S });
 		return;
 	}
@@ -1158,11 +1325,13 @@ void panel::draw_key_print(ImDrawList *dl, const RECT &key, const char *label,
 		                        ImVec2(float(cx - s2 * a / 2), float(cy + a)) };
 		im::poly(dl, tri, 3, white, white, 1.0f);
 	} else {
-		im::fill(dl, ImVec2(float(cx - a), float(cy - t)), ImVec2(float(2 * a), float(t)),
-		         white);
+		// GDI の RECT は右と下を含まない。だから 1 画素広くして、
+		// 幅の偶奇で中心が半画素ずれる分は (t & 1) で戻す
+		im::fill(dl, ImVec2(float(cx - a), float(cy - t / 2 - (t & 1))),
+		         ImVec2(float(2 * a + 1), float(t + 1)), white);
 		if (sub[0] == '+')
-			im::fill(dl, ImVec2(float(cx - t), float(cy - a)), ImVec2(float(t), float(2 * a)),
-			         white);
+			im::fill(dl, ImVec2(float(cx - t / 2 - (t & 1)), float(cy - a)),
+			         ImVec2(float(t + 1), float(2 * a + 1)), white);
 	}
 }
 
@@ -1201,7 +1370,7 @@ void panel::paint_front(ImDrawList *dl, const snapshot &s, u64 pressed, double v
 		const lcd_geom g = lcd_grid();
 		const int y = at(0, m_lay.columns_y).y, h = int(12 * m_scale), w = int(64 * m_scale);
 		for (const column &c : COLUMNS) {
-			const int cx = int(std::lround(g.fx0 + (m_lay.low_x[c.at] + m_lay.low_w[c.at] / 2) * g.d));
+			const int cx = int(std::lround(g.fx0 + (m_lay.low_x[c.at] + m_lay.low_w[c.at] / 2) * g.df));
 			RECT r{ cx - w / 2, y, cx + w / 2, y + h };
 			im::text_cap(dl, r, c.label, PANEL_INK, m_fonts.small, m_fonts.small_px, true);
 		}
@@ -1210,7 +1379,7 @@ void panel::paint_front(ImDrawList *dl, const snapshot &s, u64 pressed, double v
 		if (m_lay.modes_x >= 0) {
 			const int x = at(m_lay.modes_x, 0).x;
 			// ▶ の間隔より字が大きいと重なる（小さい窓で、字の下限が効くとき）
-			const double step = (MODE_Y[2] - MODE_Y[1]) * LOW_DOT * g.d;
+			const double step = (MODE_Y[2] - MODE_Y[1]) * LOW_DOT * g.df;
 			ImFont *font = m_fonts.small;
 			float fpx = m_fonts.small_px;
 			if (step < std::max(7.0, 8.5 * m_scale)) {
@@ -1218,7 +1387,7 @@ void panel::paint_front(ImDrawList *dl, const snapshot &s, u64 pressed, double v
 				fpx = m_fonts.tiny_px;
 			}
 			for (int k = 0; k < 3; k++) {
-				const int cy = int(std::lround(g.fsy + MODE_Y[k + 1] * LOW_DOT * g.d));
+				const int cy = int(std::lround(g.fsy + MODE_Y[k + 1] * LOW_DOT * g.df));
 				RECT r{ x, cy - h, x + int(80 * m_scale), cy + h };
 				im::text_in(dl, im::pos_of(r), im::size_of(r), MODE_LABEL[k], PANEL_INK,
 				            font, fpx, false, true, false);
@@ -1320,7 +1489,7 @@ void panel::paint_front(ImDrawList *dl, const snapshot &s, u64 pressed, double v
 		if (const svg_art *pic = m_lay.cat_art.pick(down, down))
 			pic->draw(dl, r);
 		else
-			im::round_box(dl, r, down ? KEY_DOWN : KEY_FACE, KEY_EDGE, float(3 * m_scale));
+			im::round_box(dl, r, down ? KEY_DOWN : KEY_FACE, KEY_EDGE, float(int(3 * m_scale)));
 	}
 	for (int i = 0; i < 2; i++) {
 		const place &p = ROUND[i];

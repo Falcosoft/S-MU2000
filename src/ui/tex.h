@@ -114,6 +114,21 @@ public:
 		return true;
 	}
 
+	// Same size, new pixels: write over the ones already there and tell the
+	// backend to send the whole thing up again. This is what ImFontAtlas does
+	// when it repacks (ImTextureDataQueueUpload), and unlike upload() it does
+	// not re-register the texture, so it is safe to call every frame. The panel
+	// LCD needs exactly this: its size only moves on resize, but its contents
+	// change with every frame of playback.
+	bool refresh(const std::vector<uint32_t> &argb)
+	{
+		if (!m_data || m_w <= 0 || m_h <= 0 || argb.size() < size_t(m_w) * size_t(m_h))
+			return false;
+		convert(argb);
+		ImTextureDataQueueUpload(m_data, 0, 0, m_w, m_h);
+		return true;
+	}
+
 	// The context took the texture away with it (drop_user_textures)
 	void forget() { m_data = nullptr; m_w = m_h = 0; }
 
@@ -177,6 +192,9 @@ public:
 	}
 
 	bool valid() const { return m_data != nullptr; }
+
+	int width() const { return m_w; }
+	int height() const { return m_h; }
 
 	// For ImGui::Image / ImDrawList::AddImage
 	ImTextureRef ref() const { return m_data ? m_data->GetTexRef() : ImTextureRef(); }

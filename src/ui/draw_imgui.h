@@ -87,6 +87,18 @@ inline float cap_height(ImFont *font, float px)
 	return px * 0.7f;
 }
 
+// The line box: what GDI's DT_VCENTER centers on, and what AddText measures
+// a text position against
+inline float font_line_height(ImFont *font, float px)
+{
+	if (!font)
+		return px;
+	ImFontBaked *baked = font->GetFontBaked(px);
+	if (!baked || baked->Size <= 0.0f)
+		return px;
+	return (baked->Ascent - baked->Descent) * (px / baked->Size);
+}
+
 // How far below the top of the line the cap actually starts
 inline float cap_top_offset(ImFont *font, float px)
 {
@@ -199,18 +211,26 @@ inline void text_dt(ImDrawList *dl, const RECT &r, const char *s, COLORREF c,
 
 // All-caps legend centered in a box on its cap height: the cap block sits at
 // the box's middle (horizontally centered on the box too when center_x).
+//
+// `line_center` switches the vertical rule to GDI's DT_VCENTER, which centers
+// the line box instead of the cap. The two agree only when the line box is
+// exactly cap + Y0, so a call site that replaced DT_VCENTER should pass this
+// and keep the placement GDI had rather than the near-miss cap centering.
 inline void text_cap(ImDrawList *dl, const RECT &r, const char *s, COLORREF c,
-                     ImFont *font, float px, bool center_x)
+                     ImFont *font, float px, bool center_x, bool line_center = false)
 {
 	if (!s || !s[0])
 		return;
 	// AddText puts `at` at the top of the line, not of the cap
 	const float cap = cap_height(font, px);
 	const float cap_top = cap_top_offset(font, px);
+	const float mid = (float(r.top) + float(r.bottom)) * 0.5f;
+	const float y = line_center
+	                    ? mid - font_line_height(font, px) * 0.5f
+	                    : mid - cap * 0.5f - cap_top;
 	const ImVec2 ts = font ? font->CalcTextSizeA(px, FLT_MAX, 0.0f, s)
 	                       : ImGui::CalcTextSize(s);
-	ImVec2 at((float(r.left) + float(r.right)) * 0.5f - ts.x * 0.5f,
-	         (float(r.top) + float(r.bottom)) * 0.5f - cap * 0.5f - cap_top);
+	ImVec2 at((float(r.left) + float(r.right)) * 0.5f - ts.x * 0.5f, y);
 	if (!center_x)
 		at.x = float(r.left);
 	if (font)
