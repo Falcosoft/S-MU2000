@@ -49,4 +49,10 @@ for (const file of ["index.html", "render.html", "live.html", "style.css"]) {
         path.resolve(distributionDirectory, file)
     );
 }
+// The hero screenshot lives with the docs; copy it into dist/ so the
+// Deployed pages stay self-contained (web/ holds no binary copy).
+fs.copyFileSync(
+    path.resolve(web, "..", "doc", "mu_screenshot.png"),
+    path.resolve(distributionDirectory, "mu_screenshot.png")
+);
 console.info("page: dist/ with render, live, processor bundles");

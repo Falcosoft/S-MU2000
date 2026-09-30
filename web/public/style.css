@@ -145,6 +145,35 @@ progress::-moz-progress-bar {
     margin-top: 0.5rem;
 }
 
+/* Project link with GitHub mark. */
+.project-link {
+    display: inline-flex;
+    align-items: center;
+    gap: 0.4rem;
+}
+
+.project-link svg {
+    width: 1.1em;
+    height: 1.1em;
+    fill: currentcolor;
+}
+
+/* Landing page hero screenshot. */
+.hero {
+    margin: 1rem 0;
+}
+
+.hero img {
+    width: 100%;
+    height: auto;
+    border: 1px solid #333;
+    border-radius: 0.5rem;
+}
+
+.hero figcaption {
+    margin-top: 0.35rem;
+}
+
 /* Landing page cards. */
 .choices {
     display: grid;
