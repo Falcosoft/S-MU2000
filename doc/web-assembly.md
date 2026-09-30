@@ -162,6 +162,153 @@ First design (AudioWorklet owns the synth) and what it taught:
   (both already compile to 0 on wasm32). Codegen is maxed (`-O3`);
   speed must come from architecture (render-ahead), not flags.
 
+## Improving performance — preface, problems, options
+
+Preface: offline render only needs throughput (`~0.7x` realtime is
+usable, just slow). Live needs every 128-frame quantum finished
+inside `~2.9 ms` with margin — average is not enough, the worst
+quantum sets the dropout rate. All options below keep the default
+bit-exact emulation; faster-but-different paths (`native-fx`,
+`native-engine`) are opt-in and measured separately.
+
+Problems (measured, not guessed):
+
+- Interpreter-only. `src/mame/cpu/sh2_jit.cpp:36`,
+  `src/mame/sound/swp30_jit.cpp:31-36` compile to 0 on wasm32, so
+  `emcc` runs the `sh.cpp`/`swp30.cpp` interpreter. Native baseline
+  is `~5-8x` slower without JIT (`doc/benchmarks.md`,
+  `doc/todo.md` §6); Node render logs `~0.7x` realtime.
+- Firmware dominates. Per-sample breakdown on Ryzen 7 9700X
+  (`doc/native-dsp.md`, `doc/native-engine.md` §1): SH-2 firmware
+  `~2.3 us (55%)`, SWP30 voices `~1.4 us (33%)`, MEG effects
+  `~0.5 us (12%)`. Killing MEG alone saves `~10-14%`.
+- Quantum deficit. Live measures `13-36 ms` per 128-frame quantum
+  (`4-12x` over budget) on Chromium; boot slice
+  `_smu_run_blank(44100) ~= 470 ms` wall (`160x` budget). Chromium
+  discards late quanta, Firefox plays them late — neither repays a
+  `5x` deficit.
+- Single thread. `wasm_render.cpp` calls `set_threaded(false)`, no
+  `-pthread`, no `SharedArrayBuffer`/COOP/COEP by design. Slave
+  SWP30 runs inline.
+- JS/wasm glue per quantum (`web/src/browser/processor.ts`):
+  `_malloc/_free` per MIDI message, fresh `HEAPU8`/`Int16Array`
+  views per call, `fifoLeft/Right: number[]` with `push/splice` plus
+  per-sample linear resample for non-44100 devices, `1/32768`
+  scaling per sample.
+- C++ glue per sample (`src/wasm/wasm_render.cpp:260-291`):
+  `double(g_rendered+f)/kRate` time check, branch, and
+  `l*32768/DAC_FULL_SCALE` + `clamp` for every frame.
+- Build flags. Objects compile `-O2` (`web/scripts/build.ts`),
+  standalone links `-O3` (`web/scripts/build-standalone.ts`), no
+  `-flto`, no `-msimd128`, `ALLOW_MEMORY_GROWTH=1` (bounds checks).
+- Boot cost. `~351k`-sample boot; page render uses 1-sample
+  `smu_run_blank` steps for bit-exactness (`~7 s`), worklet uses
+  512-sample slices. Every boot starts from scratch — no
+  `bootcache.h`/`nvram.h`/`voicecache` persistence yet.
+
+Potential solutions, highest ROI first:
+
+1. Expose `native-engine` (+ `native-fx-full`) to wasm. Native
+   runs SH-2 at `~1/6.5` (`2145 ns -> 329 ns`) and renders real
+   songs `2.3-3.6x` faster, `~4.2x` with lightweight FX and
+   bootcache (`doc/native-engine.md` §6.20, §6.39). Needs new
+   `smu_set_native_engine/fx` exports in `wasm_render.cpp`, updated
+   `STANDALONE_WASM` export list, `smu-types.ts`, and a page/worklet
+   toggle; keep the `100 ms / 5 ms` firmware keepalive for LCD/panel
+   and persist `voicecache` in IndexedDB next to ROMs. This is the
+   only option that removes the `2.3 us` SH-2 term instead of
+   shrinking it.
+2. Build flags. Unify objects at `-O3 -flto -msimd128 -fno-rtti`,
+   try fixed `INITIAL_MEMORY` without growth for the live module,
+   keep `-fno-exceptions` for standalone. Re-measure with the Node
+   render `realtime` line; expect percent-level, not multiples.
+3. Glue cleanup (no emulation change). Batch MIDI into one
+   `_malloc` per quantum, preallocate persistent `outPtr`/views,
+   move resampling into C++ (or request `44100 Hz` `AudioContext`
+   where the device allows it), precompute MIDI event sample
+   indices in `smu_load_midi` instead of per-sample doubles.
+4. Small-lookahead worker (revisit). The reverted `~1 s` Worker
+   survived dropouts but lagged MIDI up to the lookahead and burst.
+   A `2-3` quantum (`~6-9 ms`) FIFO with sample-stamped MIDI would
+   keep latency near one video frame while absorbing worst quanta.
+   Full `-pthread` + slave thread is the heavier variant (needs
+   COOP/COEP); measure after (1).
+5. Boot persistence. Cache NVRAM/boot state locally so repeat boots
+   skip the `~8 s` firmware bring-up. Deferred so far because saved
+   RAM changes every boot and rarely hits.
+
+What likely does not pay:
+
+- Hand-rewriting 100+ MEG effects in C++ (HLE). Saves only the
+  `0.5 us` MEG term and loses bit-exactness (see `doc/todo.md` §6
+  external review, `doc/native-dsp.md`).
+
+### Update 2026-09-30 — implemented on Xeon E3-1220 v3
+
+Done, default path stays bit-exact (5 s `ONTILMOR.mid` hashes
+identical before/after):
+
+- `wasm_render.cpp`: integer fast-reject frame per MIDI event
+  (`ceil(time*rate)`), exact double check only when due; new
+  opt-in `smu_set_native_engine/fx`, `smu_native_firmware_share`
+  exports (default off).
+- `web/scripts/build.ts`: objects `-O2` -> `-O3` (matches
+  standalone link).
+- `processor.ts`: single MIDI staging malloc per quantum, panic
+  reuses `outPtr` scratch, `Float32Array` FIFO ring instead of
+  `number[]` push/splice, `* (1/32768)` scaling.
+- `web/src/render.ts`: `--native-engine`, `--native-fx-full` flags
+  for measurement.
+- `worklet-harness.mjs`: `pathToFileURL` fix (was broken on
+  Windows absolute paths).
+
+Measured (`../ONTILMOR.mid`, Node wasm):
+
+| Mode | 5 s render | 20 s render |
+|---|---|---|
+| Default (exact) | `0.89-0.95x` | `1.04x` |
+| `--native-engine` | `1.32x` (fw share `31.6%`) | `1.70x` (fw share `18.6%`) |
+| `--native-engine --native-fx-full` | `2.58-2.64x` | — |
+
+Native rms diff `-0.03 dB` on this song (within the documented
+`±0.46 dB`). Worklet harness on the same Xeon (`FAST=0/1`,
+single note, 345x128-frame quanta):
+
+| Worklet mode | 44160 frames wall | Avg/quantum | Max quantum |
+|---|---|---|---|
+| Exact | `1.1 s` (`0.91x`) | `3.2 ms` | `38 ms` |
+| Fast synth (native+fx) | `0.2 s` (`~5x`) | `0.58 ms` | `7 ms` |
+
+Budget is `~2.9 ms`. Exact averages over budget, so Firefox
+stutters every other quantum and Chromium discards everything
+(silence) — exactly the reported symptom. Fast synth averages
+`0.58 ms`; the `7 ms` max is the one-time per-voice learn spike,
+then it settles. Live page now has Fast synth checked by default
+(`live.html`, wired through `protocol.ts` init ->
+`processor.ts` applies FX after reset, engine on going live,
+mirroring `render.cpp`).
+
+### Upstream merge 2026-09-30 — native FX fidelity fix
+
+Merged `origin/main` (`5137689`, `c952159`, `d17f14b`) into this
+branch. Directly related to the "variation seems gone" report:
+
+- `c952159`: reverb 18 types rewritten with the same structure as
+  the MEG program (`src/dsp/meg_reverb.h`), coefficients/addresses
+  read from MEG. Band diff `4-25 dB` -> `0.05-0.25 dB`.
+- `d17f14b`: chorus/variation/insertion-1 all types generated from
+  the 34 MEG program shapes (`src/dsp/meg_fx_*.h` via
+  `tools/meg_fx`, coefficients/addresses from MEG). Median band
+  diff `0.01 dB`. Also faster: dense `0.84 -> 0.76 ms`.
+- `5137689`: AWM2 skips idle voices (bit-exact, piano/dry `-25%`).
+
+Measured on Xeon with `ONTILMOR.mid` after a clean wasm rebuild
+(new headers don't trigger incremental rebuilds, so `obj`/`obj_sa`
+were removed): exact base output byte-identical pre/post merge;
+`--native-engine --native-fx-full` rms went from `+0.54 dB` (old
+approximate FX) to `-0.03 dB` vs exact. The missing variation was
+the old approximation, now replaced.
+
 ## Risks / notes
 
 - Interpreter is ~5–8× slower than JIT; fine for offline render. For live

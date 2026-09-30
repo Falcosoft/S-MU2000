@@ -20,7 +20,7 @@ const objects = compileObjects(
     emcc,
     [
         "-std=c++20",
-        "-O2",
+        "-O3",
         "-Wno-inconsistent-missing-override",
         "-Isrc",
         "-Isrc/compat"

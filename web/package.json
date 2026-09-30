@@ -12,6 +12,7 @@
         "build:standalone": "tsx scripts/build-standalone.ts",
         "build:page": "tsx scripts/build-page.ts",
         "harness": "node scripts/worklet-harness.mjs",
+        "harness:song": "node scripts/worklet-song-harness.mjs",
         "render": "tsx src/render.ts",
         "serve": "npx -y serve dist"
     },

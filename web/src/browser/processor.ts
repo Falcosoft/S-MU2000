@@ -46,12 +46,17 @@ class SmuProcessor extends AudioWorkletProcessor {
     private reportedFatal = false;
     private readonly midi: PendingMidi[] = [];
     private outPtr = 0;
+    private midiPtr = 0;
+    private midiCap = 0;
     // Resampling FIFO for non-44100 device rates.
-    // Holds rendered float frames plus a fractional read position.
-    // The FIFO is topped up every quantum, so nothing is ever lost.
-    private readonly fifoLeft: number[] = [];
-    private readonly fifoRight: number[] = [];
+    // Typed-array ring buffered at fifoLength, consumed from fifoPosition.
+    // No Array.push/splice boxing or GC on the audio thread.
+    // Topped up every quantum, so nothing is ever lost.
+    private fifoLeft = new Float32Array(16_384);
+    private fifoRight = new Float32Array(16_384);
+    private fifoLength = 0;
     private fifoPosition = 0;
+    private wantNativeEngine = false;
     private loggedFirstQuantum = false;
 
     public constructor() {
@@ -69,7 +74,11 @@ class SmuProcessor extends AudioWorkletProcessor {
         const message = data as MainToWorklet;
         switch (message.type) {
             case "init": {
-                await this.init(message.roms);
+                await this.init(
+                    message.roms,
+                    message.nativeEngine === true,
+                    message.nativeFxFull === true
+                );
                 break;
             }
             case "midi": {
@@ -89,10 +98,14 @@ class SmuProcessor extends AudioWorkletProcessor {
     }
 
     private async init(
-        roms: { kind: number; data: ArrayBuffer }[]
+        roms: { kind: number; data: ArrayBuffer }[],
+        isNativeEngine: boolean,
+        isNativeFxFull: boolean
     ): Promise<void> {
         try {
-            console.info(`[worklet] init with ${roms.length} roms`);
+            console.info(
+                `[worklet] init with ${roms.length} roms, nativeEngine=${isNativeEngine ? "on" : "off"}, nativeFx=${isNativeFxFull ? "full" : "off"}`
+            );
             const emu = await moduleReady;
             this.emu = emu;
             if (emu._smu_init(0) < 0) throw new Error("init failed");
@@ -109,8 +122,16 @@ class SmuProcessor extends AudioWorkletProcessor {
                 if (result < 0) throw new Error("bad ROM");
             }
             if (emu._smu_reset() < 0) throw new Error("reset failed");
+            // Lightweight FX runs from boot; the native engine waits for
+            // Boot completion (it needs firmware), mirroring render.cpp.
+            if (isNativeFxFull) emu._smu_set_native_fx(2);
+            this.wantNativeEngine = isNativeEngine;
             console.info("[worklet] reset done, booting across quanta");
             this.outPtr = emu._malloc(scratchFrames * 4);
+            this.midiCap = 4096;
+            this.midiPtr = emu._malloc(this.midiCap);
+            this.fifoLength = 0;
+            this.fifoPosition = 0;
             this.booted = 0;
             this.bootSecond = -1;
             this.reportedFatal = false;
@@ -137,18 +158,16 @@ class SmuProcessor extends AudioWorkletProcessor {
         const emu = this.emu;
         if (emu === undefined || this.state !== "live") return;
         // All-notes-off on every channel of every port.
-        const message = new Uint8Array(3);
-        const pointer = emu._malloc(3);
+        // Reuses the outPtr scratch bytes: no malloc on the audio thread.
+        const heap = emu.HEAPU8;
         for (let port = 0; port < 4; port++) {
             for (let channel = 0; channel < 16; channel++) {
-                message[0] = 0xb0 | channel;
-                message[1] = 123;
-                message[2] = 0;
-                emu.HEAPU8.set(message, pointer);
-                emu._smu_midi_in(port, pointer, 3);
+                heap[this.outPtr] = 0xb0 | channel;
+                heap[this.outPtr + 1] = 123;
+                heap[this.outPtr + 2] = 0;
+                emu._smu_midi_in(port, this.outPtr, 3);
             }
         }
-        emu._free(pointer);
     }
 
     // Fresh int16 view over the scratch buffer.
@@ -167,20 +186,42 @@ class SmuProcessor extends AudioWorkletProcessor {
         right: Float32Array
     ): void {
         const ratio = rate / sampleRate;
+        const scale = 1 / 32_768;
         // Top the FIFO up so the whole quantum interpolates from real frames.
         const want = Math.ceil(this.fifoPosition + left.length * ratio) + 1;
-        let need = want - this.fifoLeft.length;
+        let need = want - this.fifoLength;
+        const heap = emu.HEAPU8;
         while (need > 0) {
             const got = emu._smu_render_frames(
                 this.outPtr,
                 Math.min(512, need, scratchFrames)
             );
             if (got <= 0) break;
-            const scratch = this.view(emu);
-            for (let index = 0; index < got; index++) {
-                this.fifoLeft.push(scratch[index * 2] / 32_768);
-                this.fifoRight.push(scratch[index * 2 + 1] / 32_768);
+            // Grow the FIFO rarely (first huge chord); steady state never grows.
+            if (this.fifoLength + got > this.fifoLeft.length) {
+                const grownLeft = new Float32Array(
+                    (this.fifoLength + got) * 2
+                );
+                const grownRight = new Float32Array(
+                    (this.fifoLength + got) * 2
+                );
+                grownLeft.set(this.fifoLeft.subarray(0, this.fifoLength));
+                grownRight.set(this.fifoRight.subarray(0, this.fifoLength));
+                this.fifoLeft = grownLeft;
+                this.fifoRight = grownRight;
             }
+            const scratch = new Int16Array(
+                heap.buffer,
+                this.outPtr,
+                got * 2
+            );
+            for (let index = 0; index < got; index++) {
+                this.fifoLeft[this.fifoLength + index] =
+                    scratch[index * 2] * scale;
+                this.fifoRight[this.fifoLength + index] =
+                    scratch[index * 2 + 1] * scale;
+            }
+            this.fifoLength += got;
             need -= got;
         }
         for (let index = 0; index < left.length; index++) {
@@ -198,8 +239,9 @@ class SmuProcessor extends AudioWorkletProcessor {
         // Compact the consumed prefix once in a while.
         if (this.fifoPosition > 4096) {
             const drop = Math.floor(this.fifoPosition);
-            this.fifoLeft.splice(0, drop);
-            this.fifoRight.splice(0, drop);
+            this.fifoLeft.copyWithin(0, drop, this.fifoLength);
+            this.fifoRight.copyWithin(0, drop, this.fifoLength);
+            this.fifoLength -= drop;
             this.fifoPosition -= drop;
         }
     }
@@ -244,6 +286,10 @@ class SmuProcessor extends AudioWorkletProcessor {
             left.fill(0);
             right.fill(0);
             if (ready !== 0) {
+                if (this.wantNativeEngine) {
+                    emu._smu_set_native_engine(1);
+                    console.info("[worklet] native engine on");
+                }
                 this.state = "live";
                 console.info("[worklet] live");
                 post(this.port, { type: "live" });
@@ -270,19 +316,43 @@ class SmuProcessor extends AudioWorkletProcessor {
             return true;
         }
         // No copy: message events cannot interleave a running quantum.
-        for (const message of this.midi) {
-            const pointer = emu._malloc(message.bytes.length);
-            emu.HEAPU8.set(message.bytes, pointer);
-            emu._smu_midi_in(message.port, pointer, message.bytes.length);
-            emu._free(pointer);
+        // Single staging buffer: one malloc at init, offsets per message.
+        // Avoids per-message malloc/free on the audio thread.
+        if (this.midi.length > 0) {
+            let total = 0;
+            for (const message of this.midi) total += message.bytes.length;
+            if (total > this.midiCap) {
+                emu._free(this.midiPtr);
+                this.midiCap = total;
+                this.midiPtr = emu._malloc(this.midiCap);
+            }
+            const heap = emu.HEAPU8;
+            let at = 0;
+            const offsets: number[] = [];
+            for (const message of this.midi) {
+                heap.set(message.bytes, this.midiPtr + at);
+                offsets.push(at);
+                at += message.bytes.length;
+            }
+            for (let index = 0; index < this.midi.length; index++) {
+                const message = this.midi[index];
+                if (message !== undefined) {
+                    emu._smu_midi_in(
+                        message.port,
+                        this.midiPtr + (offsets[index] ?? 0),
+                        message.bytes.length
+                    );
+                }
+            }
+            this.midi.length = 0;
         }
-        this.midi.length = 0;
         if (sampleRate === rate) {
             const got = emu._smu_render_frames(this.outPtr, left.length);
             const scratch = this.view(emu);
+            const scale = 1 / 32_768;
             for (let index = 0; index < got; index++) {
-                left[index] = scratch[index * 2] / 32_768;
-                right[index] = scratch[index * 2 + 1] / 32_768;
+                left[index] = scratch[index * 2] * scale;
+                right[index] = scratch[index * 2 + 1] * scale;
             }
             return true;
         }

@@ -1,5 +1,5 @@
 // Node driver: render a MIDI file to WAV using the smu_render.mjs module.
-// Usage: npm run render -- --roms <rom dir> <song.mid> <out.wav> [seconds] [--usb]
+// Usage: npm run render -- --roms <rom dir> <song.mid> <out.wav> [seconds] [--usb] [--native-engine] [--native-fx-full]
 // ROM layout mirrors render.cpp: <dir>/mu2000_flash.bin,
 // <dir>/dump/{xv364a0.ic49,xv365a0.ic50,xw848a0.ic53,xw849a0.ic54},
 // <dir>/standin/sin-table.bin (optional).
@@ -13,7 +13,7 @@ const rate = 44_100;
 
 function usage(): never {
     console.error(
-        "usage: render --roms <dir> <song.mid> <out.wav> [seconds] [--usb]"
+        "usage: render --roms <dir> <song.mid> <out.wav> [seconds] [--usb] [--native-engine] [--native-fx-full]"
     );
     process.exit(1);
 }
@@ -23,13 +23,20 @@ let roms: string | undefined;
 let seconds = 0;
 let isDurationGiven = false;
 let isUsb = false;
+let isNativeEngine = false;
+let isNativeFxFull = false;
 const positional: string[] = [];
 for (let index = 0; index < argv.length; index++) {
     const a = argv[index];
+    // eslint-disable-next-line unicorn/prefer-switch -- five short flag tests read clearer as a chain
     if (a === "--roms") {
         roms = argv[++index];
     } else if (a === "--usb") {
         isUsb = true;
+    } else if (a === "--native-engine") {
+        isNativeEngine = true;
+    } else if (a === "--native-fx-full") {
+        isNativeFxFull = true;
     } else if (positional.length === 2 && !Number.isNaN(Number(a))) {
         seconds = Number(a);
         isDurationGiven = true;
@@ -100,6 +107,14 @@ const boot = check(Module._smu_boot(30 * rate), "smu_boot");
 console.log(
     `boot: ${boot} samples (${(boot / rate).toFixed(3)} s), MIDI ready`
 );
+if (isNativeFxFull) {
+    Module._smu_set_native_fx(2);
+    console.log("native-fx-full: on (MEG off, C++ FX)");
+}
+if (isNativeEngine) {
+    Module._smu_set_native_engine(1);
+    console.log("native-engine: on (firmware bypass, opt-in)");
+}
 
 const mid = readFileSync(midPath);
 {
@@ -157,6 +172,11 @@ console.log(
 console.log(
     `scheduled events: ${Number(Module._smu_scheduled_events())}, dropped: ${Number(Module._smu_dropped())}`
 );
+if (isNativeEngine) {
+    console.log(
+        `native firmware share: ${(Module._smu_native_firmware_share() * 100).toFixed(1)}%`
+    );
+}
 
 // WAV output: 16-bit stereo 44100.
 const data = pcm.subarray(0, wrote * 4);

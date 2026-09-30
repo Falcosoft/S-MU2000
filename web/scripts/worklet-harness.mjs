@@ -5,7 +5,7 @@
 // Run from web/: npm run harness (needs ../roms).
 import { readFileSync } from "node:fs";
 import path from "node:path";
-import { fileURLToPath } from "node:url";
+import { fileURLToPath, pathToFileURL } from "node:url";
 
 const here = path.dirname(fileURLToPath(import.meta.url));
 const root = path.resolve(here, "..", "..");
@@ -42,7 +42,7 @@ globalThis.registerProcessor = (name, ctor) => {
     processorCtor = ctor;
 };
 
-await import(path.resolve(dist, "smu-processor.js"));
+await import(pathToFileURL(path.resolve(dist, "smu-processor.js")).href);
 if (processorCtor === undefined) throw new Error("no processor registered");
 const processor = new processorCtor();
 
@@ -67,7 +67,16 @@ console.log(
 );
 
 if (messageHandler === undefined) throw new Error("no message handler");
-messageHandler({ data: { type: "init", roms } });
+const fast = process.env.FAST !== "0";
+console.log(`engine: ${fast ? "fast synth (native)" : "exact"}`);
+messageHandler({
+    data: {
+        type: "init",
+        roms,
+        nativeEngine: fast,
+        nativeFxFull: fast
+    }
+});
 // Let the async init (wasm load + reset) finish.
 for (let index = 0; index < 40; index++) {
     await new Promise((resolve) => setTimeout(resolve, 250));

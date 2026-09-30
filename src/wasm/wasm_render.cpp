@@ -38,6 +38,12 @@ bool g_usb_host = false;
 
 // Song state.
 std::vector<smf::event> g_events;
+// Integer fast-reject frame for each event: ceil(time*kRate). The render
+// loop first compares the integer sample clock against this; only when it
+// fires does it re-check the exact double condition (event.time <= N/kRate)
+// so scheduling stays bit-identical to render.cpp while avoiding a double
+// division for the ~99% of samples with nothing due.
+std::vector<uint64_t> g_event_frames;
 size_t g_next = 0;
 int g_port = -1;                 // -1: follow SMF port; else override (F5)
 uint64_t g_rendered = 0;         // samples rendered since boot finished
@@ -65,6 +71,7 @@ int smu_init(int usb_host)
 	delete g_mu;
 	g_mu = nullptr;
 	g_events.clear();
+	g_event_frames.clear();
 	g_next = 0;
 	g_port = -1;
 	g_rendered = 0;
@@ -83,6 +90,26 @@ int smu_init(int usb_host)
 	g_mu->set_threaded(false);
 	g_mu->set_usb_host(g_usb_host);
 	return 0;
+}
+
+EMSCRIPTEN_KEEPALIVE
+void smu_set_native_engine(int mode)
+{
+	if (g_mu)
+		g_mu->set_native_engine(mode);
+}
+
+EMSCRIPTEN_KEEPALIVE
+void smu_set_native_fx(int mode)
+{
+	if (g_mu)
+		g_mu->set_native_fx(mode);
+}
+
+EMSCRIPTEN_KEEPALIVE
+double smu_native_firmware_share()
+{
+	return g_mu ? g_mu->native_firmware_share() : 0.0;
 }
 
 EMSCRIPTEN_KEEPALIVE
@@ -221,6 +248,7 @@ int smu_load_midi(const uint8_t *ptr, size_t len)
 	set_err("");
 	if (!g_mu) { set_err("smu_init が呼ばれていない"); return -1; }
 	g_events.clear();
+	g_event_frames.clear();
 	g_next = 0;
 	g_port = -1;
 	g_rendered = 0;
@@ -230,6 +258,9 @@ int smu_load_midi(const uint8_t *ptr, size_t len)
 		set_err(err);
 		return -1;
 	}
+	g_event_frames.reserve(g_events.size());
+	for (const smf::event &e : g_events)
+		g_event_frames.push_back(uint64_t(std::ceil(e.time * double(kRate) - 1e-9)));
 	return (int)g_events.size();
 }
 
@@ -262,9 +293,16 @@ int smu_render_frames(int16_t *out, int nframes)
 {
 	if (!g_mu || !out || nframes <= 0)
 		return -1;
+	const double inv_rate = 1.0 / double(kRate);
 	for (int f = 0; f < nframes; f++) {
-		const double t = double(g_rendered + f) / double(kRate);
-		while (g_next < g_events.size() && g_events[g_next].time <= t) {
+		const uint64_t now = g_rendered + uint64_t(f);
+		// Fast path: integer reject avoids the double division when the
+		// next event is still in the future (the common case). The double
+		// comparison is the ground truth and keeps scheduling identical.
+		while (g_next < g_events.size() && now >= g_event_frames[g_next]) {
+			const double t = double(now) * inv_rate;
+			if (g_events[g_next].time > t)
+				break;
 			const std::vector<u8> &ev = g_events[g_next].bytes;
 			if (ev.size() == 2 && ev[0] == 0xf5) {
 				g_port = std::clamp(int(ev[1]) - 1, 0, mu2000::MIDI_PORTS - 1);

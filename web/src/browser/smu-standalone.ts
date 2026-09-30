@@ -47,6 +47,9 @@ interface StandaloneExports {
     readonly smu_load_midi: (ptr: number, length: number) => number;
     readonly smu_song_length: () => number;
     readonly smu_midi_in: (port: number, ptr: number, length: number) => number;
+    readonly smu_set_native_engine: (mode: number) => void;
+    readonly smu_set_native_fx: (mode: number) => void;
+    readonly smu_native_firmware_share: () => number;
     readonly smu_render_frames: (outPtr: number, nframes: number) => number;
     readonly smu_song_done: () => number;
     readonly smu_scheduled_events: () => bigint;
@@ -116,6 +119,18 @@ class StandaloneModule implements SmuModule {
 
     public _smu_midi_in(port: number, ptr: number, length: number): number {
         return this.exports.smu_midi_in(port, ptr, length);
+    }
+
+    public _smu_set_native_engine(mode: number): void {
+        this.exports.smu_set_native_engine(mode);
+    }
+
+    public _smu_set_native_fx(mode: number): void {
+        this.exports.smu_set_native_fx(mode);
+    }
+
+    public _smu_native_firmware_share(): number {
+        return this.exports.smu_native_firmware_share();
     }
 
     public _smu_render_frames(outPtr: number, nframes: number): number {

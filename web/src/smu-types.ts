@@ -14,6 +14,9 @@ export interface SmuModule {
     _smu_load_midi(ptr: number, length: number): number;
     _smu_song_length(): number;
     _smu_midi_in(port: number, ptr: number, length: number): number;
+    _smu_set_native_engine(mode: number): void;
+    _smu_set_native_fx(mode: number): void;
+    _smu_native_firmware_share(): number;
     _smu_render_frames(outPtr: number, nframes: number): number;
     _smu_song_done(): number;
     _smu_scheduled_events(): bigint;

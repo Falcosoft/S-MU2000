@@ -50,7 +50,7 @@ child_process.execFileSync(
         "-sINITIAL_MEMORY=128MB",
         "-sMAXIMUM_MEMORY=2GB",
         "-sALLOW_MEMORY_GROWTH=1",
-        "-sEXPORTED_FUNCTIONS=_smu_init,_smu_shutdown,_smu_set_rom,_smu_reset,_smu_boot,_smu_midi_ready,_smu_run_blank,_smu_load_midi,_smu_song_length,_smu_midi_in,_smu_render_frames,_smu_song_done,_smu_scheduled_events,_smu_dropped,_smu_error,_smu_error_copy,_smu_sample_rate,_smu_set_usb_host,_malloc,_free",
+        "-sEXPORTED_FUNCTIONS=_smu_init,_smu_shutdown,_smu_set_rom,_smu_reset,_smu_boot,_smu_midi_ready,_smu_run_blank,_smu_load_midi,_smu_song_length,_smu_midi_in,_smu_set_native_engine,_smu_set_native_fx,_smu_native_firmware_share,_smu_render_frames,_smu_song_done,_smu_scheduled_events,_smu_dropped,_smu_error,_smu_error_copy,_smu_sample_rate,_smu_set_usb_host,_malloc,_free",
         "-o",
         wasmOutput
     ],

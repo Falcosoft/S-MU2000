@@ -23,6 +23,7 @@ export async function init(): Promise<void> {
     const status = element("status", HTMLSpanElement);
     const midiButton = element("midi", HTMLButtonElement);
     const midiState = element("midiState", HTMLSpanElement);
+    const fastSynth = element("fastSynth", HTMLInputElement);
     const devices = element("devices", HTMLDivElement);
     const lastMessage = element("lastMessage", HTMLDivElement);
     const dots = [0, 1, 2, 3].map((port) =>
@@ -135,9 +136,17 @@ export async function init(): Promise<void> {
             roms.reduce((sum, rom) => sum + rom.data.byteLength, 0) / 1_048_576;
         setStatus("Loading ROMs…");
         console.info(
-            `[live] posting init with ${roms.length} roms (${megabytes.toFixed(1)} MB)`
+            `[live] posting init with ${roms.length} roms (${megabytes.toFixed(1)} MB), fastSynth=${fastSynth.checked ? "on" : "off"}`
         );
-        post({ type: "init", roms }, transfer);
+        post(
+            {
+                type: "init",
+                roms,
+                nativeEngine: fastSynth.checked,
+                nativeFxFull: fastSynth.checked
+            },
+            transfer
+        );
         await audio.resume();
         console.info(`[live] context resumed, state=${audio.state}`);
     }
@@ -157,7 +166,7 @@ export async function init(): Promise<void> {
                 isLive = true;
                 refreshStart(card.files);
                 setStatus(
-                    `Live at ${context?.sampleRate ?? 44_100} Hz. Play MIDI.`
+                    `Live at ${context?.sampleRate ?? 44_100} Hz (${fastSynth.checked ? "fast synth" : "exact"}). Play MIDI.`
                 );
                 break;
             }

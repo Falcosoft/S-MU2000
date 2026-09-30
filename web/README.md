@@ -98,6 +98,18 @@ It boots across 128-frame quanta exactly like the page, then plays a
 note and checks the output is non-silent. `HARNESS OK` with a silent
 browser points at the browser/audio path, not the emulation.
 
+Song harness (same bundle, whole MIDI file fed as timed live MIDI —
+dense polyphony, CCs, XG SysEx, multi-port routing):
+
+```sh
+npm run harness:song -- /path/to/song.mid [--seconds 30] [--fast 0|1] [--roms ../roms]
+```
+
+Reports realtime factor, avg/max quantum ms, and overruns over the
+`~2.9 ms` quantum budget. Defaults mirror the live page (fast synth
+on, 30 s cap). The SMF parser covers tempo, `FF 21` port prefix, and
+the Yamaha port meta; files stay outside the repo.
+
 ## Layout
 
 - `scripts/build.ts` — Node wasm module (`out/smu_render.mjs`).
@@ -105,6 +117,7 @@ browser points at the browser/audio path, not the emulation.
 - `scripts/build-page.ts` — page bundles (`dist/`).
 - `scripts/emu.ts` — shared source list, emcc discovery, compilation.
 - `scripts/worklet-harness.mjs` — CLI worklet test (`npm run harness`).
+- `scripts/worklet-song-harness.mjs` — whole-song worklet stress (`npm run harness:song`).
 - `src/render.ts` — Node CLI: MIDI file to WAV file.
 - `src/smu-types.ts` — module interface shared by both loaders.
 - `src/browser/smu-standalone.ts` — base64 wasm loader (pages + worklet).

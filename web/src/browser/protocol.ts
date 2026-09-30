@@ -6,7 +6,12 @@ export interface RomImage {
 }
 
 export type MainToWorklet =
-    | { type: "init"; roms: RomImage[] }
+    | {
+          type: "init";
+          roms: RomImage[];
+          nativeEngine?: boolean;
+          nativeFxFull?: boolean;
+      }
     | { type: "midi"; port: number; bytes: number[] }
     | { type: "panic" };
 
