@@ -48,5 +48,12 @@ cp -f NOTICE.txt "$DIST/NOTICE.txt"
 
 printf '# Put the path to your ROM folder on the first line, e.g.\n# /Users/you/roms\n' > "$DIST/roms.txt.example"
 
+# The gui and the plug-ins are the point of a release: stop rather than
+# publish a zip without them (a wrong build dir once shipped only verify,
+# render and statetest)
+for need in "$DIST/bin/gui" "$DIST/plugins/S-MU2000.vst3"; do
+  [ -e "$need" ] || { echo "error: $need is missing" >&2; exit 1; }
+done
+
 echo "staged macos dist in $DIST:"
 ls "$DIST" "$DIST/bin" "$DIST/plugins"

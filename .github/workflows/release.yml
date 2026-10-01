@@ -87,8 +87,9 @@ jobs:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4 pinned
       - run: make -j$(sysctl -n hw.ncpu) UNIVERSAL=1 all
       - run: make UNIVERSAL=1 clap
-      - run: make test
-      - run: bash scripts/package-macos.sh build dist-macos
+      # UNIVERSAL=1 builds into build-universal/, so test and package that
+      - run: make UNIVERSAL=1 test
+      - run: bash scripts/package-macos.sh build-universal dist-macos
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4 pinned
         with:
           name: dist-macos
