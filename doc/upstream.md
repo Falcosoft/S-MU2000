@@ -142,6 +142,8 @@ Still More Fighting を 1 トラックずつ鳴らすと、13 トラック中 11
 
 こちらのコミット: `swp30.cpp` の `mixer_att`
 
+MAME に投稿した PR（2026-10-02）: [mamedev/mame#16292](https://github.com/mamedev/mame/pull/16292)（ブランチ `swp30-mixer-att`）。MAME でもパンの表が実機と合った（パン 16 で +3.5 / -11.5）。
+
 ## 6. 声ごとのフィルタの 2 段目にも 1 段目のレゾナンスが掛かる（直した）
 
 **症状**: オーバードライブギター（PC29）の低い音で、160Hz あたりが実機より 10dB
@@ -276,6 +278,8 @@ m/r レジスタへの書き込みは 3 命令遅れて入る。プログラム�
 
 こちらのコミット: `swp30.cpp` の `streaming_block::read_16`
 
+MAME に投稿した PR（2026-10-02）: 12 と一緒に [mamedev/mame#16291](https://github.com/mamedev/mame/pull/16291)（ブランチ `swp30-sample-fetch`）。
+
 ## 11. MEG の分岐が無いことになっている（直した）
 
 **症状**: LO-FI を使う音（パフォーマンス 007 Super Bass、097 Lo-Fi Loop）が、実機より
@@ -343,6 +347,8 @@ DYNA 系は実機のパフォーマンスに無く、まだ実機と比べてい
 30Hz 以下の割合が 17.6% → 9.6% になった（60 音を重ねて圧縮サンプルのずれが溜まっていた）。
 
 こちらのコミット: `swp30.cpp` の `streaming_block::step`
+
+MAME に投稿した PR（2026-10-02）: 10 と一緒に [mamedev/mame#16291](https://github.com/mamedev/mame/pull/16291)。MAME の dense で直流 417 → 78、30Hz 以下 12.6% → 0.4%。
 
 ## 13. チップの中のピッチ EG（スロット 0x0B・0x10、内部ポート 4）が無い（直した）
 
@@ -1360,3 +1366,9 @@ MEG が遅延メモリ（リバーブ RAM）へ書く値は `p >> 15`（算術�
 ほかは変わらない: PHAZE1.MID の 60 秒で、50ms の帯の差の最大 0.1dB（消え際だけ）。
 
 こちらのコミット: 6a18898（`swp30.cpp` の `meg_mem_value`、`swp30_jit.cpp`）
+
+MAME に投稿した PR（2026-10-02）: [mamedev/mame#16293](https://github.com/mamedev/mame/pull/16293)（ブランチ `swp30-meg-memw-rounding`。解釈実行と DRC）。
+MAME の `-nodrc` の有り無しの差（音の出だしで最大 363）は master にもとからあり、この直しとは関係ない。
+
+**MAME にまだ入っていないもの**（2026-10-02 に master 3f748f459d と突き合わせた）: 1（sh_port の m_dr）・2・4・6・7・8・9・11・13・14・15・16・25・27・28・29・31・32・38。
+11・29・31 は `swp30-meg-branches`、32 は `swp30-meg-index2`、25 は `swp30-meg-lfo-phase`（fork にある。25 はそのまま載る）。36 は出さない。
