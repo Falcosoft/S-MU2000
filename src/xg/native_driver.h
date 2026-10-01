@@ -1724,9 +1724,11 @@ private:
 				          : exact_send(s, part, true, s.base34))
 				       : send_reg(*s.cal, 0x34, true, m_cc[part].cho, s.cal->cal_cho,
 				                  s.rnd_drop, s.base34));
+			// **包絡線の刻みと同じ `cut_with_cc` で書く**（issue #3）。`cutoff_reg` を直に
+			// 呼んでいて、式の道（cut_exact）と CC71・割り当ての足し分が抜け、つまみが
+			// 動くたびに切る高さが一瞬だけ別の値（PHAZE1 で 16e3 → 13ff）に飛んでプチ音になった
 			if (s.cut)
-				m_poke(u32(i) * 64 + 0x00,
-				       cutoff_reg(s.cut, *s.cal, part, s.elem, s.keynote));
+				m_poke(u32(i) * 64 + 0x00, cut_with_cc(s, s.cut));
 			if (s.cal->has(0x04))
 				m_poke(u32(i) * 64 + 0x04,
 				       s.cal->synth && s.elem
