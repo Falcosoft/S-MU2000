@@ -1291,7 +1291,26 @@ public:
 		const u8 *b = m_ram + ram::part_base(part);
 		const int fine = int(s16(u16(u16(b[ram::PART_FINE]) << 8 | b[ram::PART_FINE + 1])));
 		// マスターチューン（全部のパートに効く）も一緒に足す
-		return fine * 100 / 8192 + master_tune_tenths() / 10;
+		return fine * 100 / 8192 + master_tune_tenths() / 10 + part_detune_cents(part);
+	}
+
+	// **パートの DETUNE**（08 pp 09・0A。6.240、issue #3）。旋律もドラムも同じセントを足す
+	int part_detune_cents(int part) const
+	{
+		if (!m_ram || part < 0 || part >= PARTS)
+			return 0;
+		const u8 *b = m_ram + ram::part_base(part);
+		return nv::detune_cents(int(b[0x09]), int(b[0x0a]));
+	}
+
+	// **ドラムのパートのノートシフト**（6.240）。旋律は鍵を移すが、ドラムは打を
+	// 選び直さず、半音 × 100 セントを音程に足す（実機 `0x128374`。マスター移調は入らない）
+	int drum_shift_cents(int part) const
+	{
+		if (!m_ram || part < 0 || part >= PARTS)
+			return 0;
+		const u8 *b = m_ram + ram::part_base(part);
+		return (int(b[0x08]) - 64 + int(s8(b[ram::PART_COARSE]))) * 100 + part_detune_cents(part);
 	}
 
 	int part_shift(int part) const
@@ -3606,7 +3625,8 @@ public:
 				                   drum_live(part, note, 0x0b),
 				                   drum_live(part, note, 0x0c),
 				                   drum_live(part, note, 0x0e),
-				                   drum_live(part, note, 0x0f));
+				                   drum_live(part, note, 0x0f),
+				                   drum_shift_cents(part));
 				// **`0x10` のビット 14 は、直前に鳴らした旋律の音の
 				// 印を拾う**（6.179）。実機は旋律の段で `0x43E96E` に
 				// byte10 の印を置くが、ドラムの段はそこを書き直さず
