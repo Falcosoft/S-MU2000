@@ -8,7 +8,7 @@ A software tone generator modeled on the Yamaha MU2000, designed to be played as
 
 ![Screenshot](doc/mu_screenshot.png)
 
-**Current state: runs as VST3 / CLAP (Windows, Linux) and VST3 / Audio Unit (macOS), with a hardware-style front-panel screen plus a mouse-and-keyboard editor.**
+**Current state: runs as VST3 / CLAP (Windows, [Linux](#building-on-linux)) and VST3 / Audio Unit (macOS), with a hardware-style front-panel screen plus a mouse-and-keyboard editor.**
 
 
 This project is developed in the open, work-in-progress and all. On X, follow `#S_MU2000`.
