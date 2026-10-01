@@ -12,6 +12,8 @@ Design and verification notes: [doc/web-assembly.md](../doc/web-assembly.md).
 - ROMs in `../roms/` (gitignored, never committed): `mu2000_flash.bin`,
   `dump/xv364a0.ic49`, `dump/xv365a0.ic50`, `dump/xw848a0.ic53`,
   `dump/xw849a0.ic54`, `standin/sin-table.bin` (optional).
+  Extract them from your own MU2000 — see
+  [Preparing the ROMs](https://github.com/tarboh/S-MU2000/blob/main/doc/manual.en.md#2-preparing-the-roms).
 
 ## Commands (run in this directory)
 
@@ -30,14 +32,17 @@ npm run format
 ## Pages
 
 `public/` holds the page sources (`index.html` landing, `render.html`,
-`live.html`, `style.css`); `npm run build:page` emits the deployable `dist/`
-(minified bundles + sourcemaps, worklet processor). The wasm binary is
-embedded as base64, so `dist/` needs no separate fetch.
+`live.html`, `play.html`, `style.css`); `npm run build:page` emits the
+deployable `dist/` (minified bundles + sourcemaps, worklet processor).
+The wasm binary is embedded as base64, so `dist/` needs no separate fetch.
 
 - Render: pick your ROM folder and a MIDI file, Render with a progress bar,
   then play or download the WAV.
 - Live: pick your ROM folder, Boot synth, Enable MIDI, play from up to 4
   WebMIDI inputs (ports A–D) with activity dots and a Panic button.
+- Play: pick your ROM folder, Boot synth, pick a MIDI file, play it
+  through the live synth with a playback progress bar. Picking another
+  file replaces the song immediately; Play replays, Stop stops.
 
 Needs HTTP (`npm run serve`); `file://` cannot load the worklet. ROMs are
 picked once and stored locally in your browser (IndexedDB) — the Forget
@@ -52,8 +57,8 @@ a build tag first (`src/browser/build-tag.ts`). After pressing Boot
 synth the console must show, in order:
 
 ```text
-[live] live-6 creating AudioContext
-[worklet] processor live-6, sampleRate=48000
+[live] live-7 creating AudioContext
+[worklet] processor live-7, sampleRate=48000
 [worklet] wasm module loaded
 [worklet] init with 6 roms
 [worklet] reset done, booting across quanta
@@ -124,6 +129,8 @@ port meta; files stay outside the repo.
 - `src/browser/smu-standalone.ts` — base64 wasm loader (pages + worklet).
 - `src/browser/processor.ts` — synth worklet (`dist/smu-processor.js`).
 - `src/browser/protocol.ts` — page/worklet message types.
+- `src/browser/smf.ts` — SMF parser for the play page (mirrors `src/smf.cpp`).
+- `src/browser/play-app.ts` — MIDI playback page (`dist/play.js`).
 - `src/browser/roms.ts` + `idb.ts` — ROM picker card + local persistence.
 - `src/wasm/` is intentionally **not** here: the C++ glue
   (`../src/wasm/wasm_render.cpp`) lives with the other C++ frontends —

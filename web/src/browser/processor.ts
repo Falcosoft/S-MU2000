@@ -3,10 +3,10 @@
 // MIDI applies within one quantum this way.
 // No grouping, no lookahead lag.
 // Booting runs chunked across quanta (silence out), then realtime audio.
-// MIDI arrives as page messages.
+// MIDI arrives as page messages, live or as a scheduled song file.
 // Static loader import only: dynamic import is disallowed on the scope.
 import type { SmuModule } from "../smu-types.ts";
-import type { MainToWorklet, WorkletToMain } from "./protocol.ts";
+import type { MainToWorklet, SongEvent, WorkletToMain } from "./protocol.ts";
 import { BUILD_TAG } from "./build-tag.ts";
 import { loadSmu } from "./smu-standalone.ts";
 
@@ -17,6 +17,10 @@ const bootCap = 30 * rate;
 // Browsers then stop calling the processor, stalling boot silently.
 const bootSlice = 512;
 const scratchFrames = 8192;
+// Song playback: 2 s of reverb tail after the last event.
+// Progress posts back about 10 times a second (32 quanta of 128).
+const songTailFrames = 2 * rate;
+const songReportEvery = 32;
 
 const moduleReady: Promise<SmuModule> = (async () => {
     const emu = await loadSmu();
@@ -45,6 +49,13 @@ class SmuProcessor extends AudioWorkletProcessor {
     private bootSecond = -1;
     private reportedFatal = false;
     private readonly midi: PendingMidi[] = [];
+    private song: SongEvent[] | undefined;
+    private songAt = 0;
+    private songFrame = 0;
+    private songLength = 0;
+    private songTail = 0;
+    private songNotified = true;
+    private songReport = 0;
     private outPtr = 0;
     private midiPtr = 0;
     private midiCap = 0;
@@ -77,7 +88,8 @@ class SmuProcessor extends AudioWorkletProcessor {
                 await this.init(
                     message.roms,
                     message.nativeEngine === true,
-                    message.nativeFxFull === true
+                    message.nativeFxFull === true,
+                    message.usbHost === true
                 );
                 break;
             }
@@ -90,6 +102,14 @@ class SmuProcessor extends AudioWorkletProcessor {
                 }
                 break;
             }
+            case "play": {
+                this.playSong(message.events, message.length);
+                break;
+            }
+            case "stop": {
+                this.stopSong();
+                break;
+            }
             case "panic": {
                 this.panic();
                 break;
@@ -100,15 +120,17 @@ class SmuProcessor extends AudioWorkletProcessor {
     private async init(
         roms: { kind: number; data: ArrayBuffer }[],
         isNativeEngine: boolean,
-        isNativeFxFull: boolean
+        isNativeFxFull: boolean,
+        isUsbHost: boolean
     ): Promise<void> {
         try {
             console.info(
-                `[worklet] init with ${roms.length} roms, nativeEngine=${isNativeEngine ? "on" : "off"}, nativeFx=${isNativeFxFull ? "full" : "off"}`
+                `[worklet] init with ${roms.length} roms, nativeEngine=${isNativeEngine ? "on" : "off"}, nativeFx=${isNativeFxFull ? "full" : "off"}, usb=${isUsbHost ? "on" : "off"}`
             );
             const emu = await moduleReady;
             this.emu = emu;
-            if (emu._smu_init(0) < 0) throw new Error("init failed");
+            if (emu._smu_init(isUsbHost ? 1 : 0) < 0)
+                throw new Error("init failed");
             for (const rom of roms) {
                 const bytes = new Uint8Array(rom.data);
                 const pointer = emu._malloc(bytes.length);
@@ -170,6 +192,70 @@ class SmuProcessor extends AudioWorkletProcessor {
         }
     }
 
+    // Start a parsed song on the sample clock.
+    // Replacing cuts the previous song with all-notes-off first.
+    private playSong(events: SongEvent[], length: number): void {
+        if (this.emu === undefined || this.state !== "live") {
+            post(this.port, { type: "error", message: "synth is not booted" });
+            return;
+        }
+        this.stopSong();
+        if (events.length === 0) {
+            post(this.port, { type: "song", position: 0, length, done: true });
+            return;
+        }
+        this.song = events;
+        this.songAt = 0;
+        this.songFrame = 0;
+        this.songLength = length;
+        this.songTail = songTailFrames;
+        this.songNotified = false;
+        this.songReport = 0;
+        post(this.port, { type: "song", position: 0, length, done: false });
+    }
+
+    // Drop the song and silence it.
+    // Playback position resets: replaying re-posts the song.
+    private stopSong(): void {
+        this.song = undefined;
+        this.songAt = 0;
+        this.songFrame = 0;
+        this.songTail = 0;
+        this.songNotified = true;
+        this.panic();
+    }
+
+    // Move the song clock by the internal frames just rendered.
+    // Reports progress back, ending with a tail after the last event.
+    private advanceSong(internal: number): void {
+        if (this.song === undefined) return;
+        this.songFrame += internal;
+        if (this.songAt >= this.song.length) {
+            this.songTail -= internal;
+            if (this.songTail <= 0 && !this.songNotified) {
+                this.songNotified = true;
+                const length = this.songLength;
+                this.song = undefined;
+                post(this.port, {
+                    type: "song",
+                    position: length,
+                    length,
+                    done: true
+                });
+                return;
+            }
+        }
+        this.songReport++;
+        if (this.songReport % songReportEvery === 0) {
+            post(this.port, {
+                type: "song",
+                position: this.songFrame / rate,
+                length: this.songLength,
+                done: false
+            });
+        }
+    }
+
     // Fresh int16 view over the scratch buffer.
     // The wasm buffer can grow, so views are never kept.
     private view(emu: SmuModule): Int16Array {
@@ -184,12 +270,13 @@ class SmuProcessor extends AudioWorkletProcessor {
         emu: SmuModule,
         left: Float32Array,
         right: Float32Array
-    ): void {
+    ): number {
         const ratio = rate / sampleRate;
         const scale = 1 / 32_768;
         // Top the FIFO up so the whole quantum interpolates from real frames.
         const want = Math.ceil(this.fifoPosition + left.length * ratio) + 1;
         let need = want - this.fifoLength;
+        let produced = 0;
         const heap = emu.HEAPU8;
         while (need > 0) {
             const got = emu._smu_render_frames(
@@ -197,6 +284,7 @@ class SmuProcessor extends AudioWorkletProcessor {
                 Math.min(512, need, scratchFrames)
             );
             if (got <= 0) break;
+            produced += got;
             // Grow the FIFO rarely (first huge chord); steady state never grows.
             if (this.fifoLength + got > this.fifoLeft.length) {
                 const grownLeft = new Float32Array(
@@ -244,10 +332,11 @@ class SmuProcessor extends AudioWorkletProcessor {
             this.fifoLength -= drop;
             this.fifoPosition -= drop;
         }
+        return produced;
     }
 
     // One quantum: boot chunks run here with silence out.
-    // Live quanta drain the MIDI queue first, then render to float.
+    // Live quanta feed due song events, drain the MIDI queue, then render.
     // Never throws on the audio thread.
     // A throw would kill the processor silently.
     // Failures report to the page once instead.
@@ -318,6 +407,23 @@ class SmuProcessor extends AudioWorkletProcessor {
         // No copy: message events cannot interleave a running quantum.
         // Single staging buffer: one malloc at init, offsets per message.
         // Avoids per-message malloc/free on the audio thread.
+        // Song playback: due events join the MIDI queue within the quantum.
+        // File timing stays sample-accurate this way.
+        if (this.song !== undefined) {
+            const internal =
+                sampleRate === rate
+                    ? left.length
+                    : Math.ceil(left.length * (rate / sampleRate)) + 2;
+            const horizon = this.songFrame + internal;
+            while (this.songAt < this.song.length) {
+                if (this.midi.length >= 4096) break;
+                const event = this.song[this.songAt];
+                if (event === undefined) break;
+                if (event.time * rate > horizon) break;
+                this.midi.push({ port: event.port, bytes: event.bytes });
+                this.songAt++;
+            }
+        }
         if (this.midi.length > 0) {
             let total = 0;
             for (const message of this.midi) total += message.bytes.length;
@@ -346,6 +452,7 @@ class SmuProcessor extends AudioWorkletProcessor {
             }
             this.midi.length = 0;
         }
+        let internal: number;
         if (sampleRate === rate) {
             const got = emu._smu_render_frames(this.outPtr, left.length);
             const scratch = this.view(emu);
@@ -354,9 +461,11 @@ class SmuProcessor extends AudioWorkletProcessor {
                 left[index] = scratch[index * 2] * scale;
                 right[index] = scratch[index * 2 + 1] * scale;
             }
-            return true;
+            internal = got;
+        } else {
+            internal = this.renderResampled(emu, left, right);
         }
-        this.renderResampled(emu, left, right);
+        this.advanceSong(internal);
         return true;
     }
 
