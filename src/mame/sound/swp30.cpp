@@ -3610,6 +3610,14 @@ static inline u32 meg_pack24(s64 p)
 	return u32(util::sext(s32(q), 24));
 }
 
+// S-MU2000: 遅延メモリへ書く値も 0 の側へ切り捨てる（meg_pack24 と同じ。doc/upstream.md の 39、discussion #69）。
+// MAME は p >> 15（負の無限大の側）で、負の値が 0 に戻らず、音が止んだあともリバーブが -100dB あたりで
+// 鳴り続けた（数百 Hz の音）。実機は離して 2〜3 秒で消える
+static inline s64 meg_mem_value(s64 p)
+{
+	return p / 32768;
+}
+
 // S-MU2000: MEG の分岐（doc/upstream.md の 11）。
 //
 // MAME は「分岐は無い」としていて、bit 0x3f の立った命令を ALU の無い命令として
@@ -3832,7 +3840,7 @@ void swp30_device::meg_state::step()
 
 	if(d.memw) {
 		m_memw_active[m_delay_2] = true;
-		m_memw_value[m_delay_2] = m_p >> 15;
+		m_memw_value[m_delay_2] = meg_mem_value(m_p);
 	} else
 		m_memw_active[m_delay_2] = false;
 
@@ -4144,7 +4152,7 @@ void swp30_device::meg_state::run_program(const op *ops)
 
 		m_memw_active[d2] = o.memw;
 		if(o.memw)
-			m_memw_value[d2] = p >> 15;
+			m_memw_value[d2] = meg_mem_value(p);
 
 		m_index_active[d3] = o.index;
 		if(o.index)
