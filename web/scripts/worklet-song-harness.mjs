@@ -232,7 +232,9 @@ messageHandler({
         type: "init",
         roms,
         nativeEngine: fast,
-        nativeFxFull: fast
+        nativeFxFull: fast,
+        // USB ports like the live page, so ports C-D sound too.
+        usbHost: true
     }
 });
 // Let the async init (wasm load + reset) finish.

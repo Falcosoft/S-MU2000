@@ -145,7 +145,10 @@ export async function init(): Promise<void> {
                 type: "init",
                 roms,
                 nativeEngine: fastSynth.checked,
-                nativeFxFull: fastSynth.checked
+                nativeFxFull: fastSynth.checked,
+                // USB ports, like the desktop default.
+                // WebMIDI ports C-D sound instead of going quiet on DIN.
+                usbHost: true
             },
             transfer
         );

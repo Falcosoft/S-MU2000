@@ -119,7 +119,9 @@ export async function init(): Promise<void> {
 
             setStatus("Uploading ROMs…");
             await yieldToBrowser();
-            if (emu._smu_init(0) < 0) throw new Error(lastError(emu));
+            // USB ports, like the desktop default: song ports 1-4 reach
+            // A-D discretely instead of folding 3-4 onto A-B.
+            if (emu._smu_init(1) < 0) throw new Error(lastError(emu));
             for (const slot of ROM_SLOTS) {
                 const file = card.files.get(slot.fileName);
                 if (file === undefined) {

@@ -79,7 +79,9 @@ so `roms/` drops in as-is; sine table optional), one MIDI picker, Render
 button, progress bar, `<audio>` preview + WAV download. Picked ROMs persist
 in IndexedDB (Forget button clears them). Render is chunked on the main
 thread (2 s audio per chunk, `setTimeout` yields); boot uses 1-sample
-`smu_run_blank` steps so it ends on the exact ready sample.
+`smu_run_blank` steps so it ends on the exact ready sample. The synth
+boots on USB ports like the desktop default, so song ports 1-4 reach
+A-D discretely.
 
 Notes:
 
@@ -111,6 +113,8 @@ The synth instance lives in the worklet and renders synchronously, one
 bytes per port, and MIDI applies within the same quantum — no grouping,
 no lookahead lag. Boot runs chunked across quanta (512-sample slices,
 silence out, progress posted back roughly once per emulated second).
+The synth boots on USB ports like the desktop default, so WebMIDI
+inputs on ports C-D sound instead of going quiet.
 The wasm module loads via static `import` of the loader (dynamic
 `import()` is disallowed on `WorkletGlobalScope`); the AudioContext
 opens at the device native rate with a linear-resampling FIFO for
@@ -161,6 +165,24 @@ First design (AudioWorklet owns the synth) and what it taught:
   machine code into executable memory, which the sandbox forbids
   (both already compile to 0 on wasm32). Codegen is maxed (`-O3`);
   speed must come from architecture (render-ahead), not flags.
+
+## Step 4 — Web MIDI playback (mix of live and render)
+
+Files: `web/public/play.html`, `web/src/browser/play-app.ts` (page),
+`web/src/browser/smf.ts` (SMF parser mirroring `src/smf.cpp`),
+`web/src/browser/protocol.ts` (`play`/`stop`/`song` messages).
+
+The page boots the worklet synth like the live page (ROM picker, fast
+synth on by default, chunked boot with progress, USB ports so all four
+parts sound discretely) but takes a MIDI file like the render page —
+no WebMIDI. The file is parsed on the page (`smf.ts`: tempo, `FF 21`,
+Yamaha port meta, track/device names, `F5` overrides folded USB-style)
+and posted to the worklet, which feeds due events into its MIDI queue
+each quantum on the sample clock and posts playback position back
+(~10 Hz) plus a done message after a 2 s tail. Picking another file
+replaces the song immediately; Stop clears it with all-notes-off and
+Play replays it. No wasm change was needed: scheduling rides the
+existing live `midi_in` path.
 
 ## Improving performance — preface, problems, options
 
