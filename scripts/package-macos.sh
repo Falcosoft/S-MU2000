@@ -42,6 +42,12 @@ if command -v codesign >/dev/null 2>&1; then
   done
 fi
 
+# The photo-style panel art: the gui finds art/real one level above bin/
+# (layout.cpp, find_default). Without it the standalone gui falls back to
+# the plain built-in panel.
+mkdir -p "$DIST/art"
+cp -rf art/real "$DIST/art/"
+
 cp -f LICENSE "$DIST/LICENSE.txt"
 cp -f NOTICE.txt "$DIST/NOTICE.txt"
 [ -f doc/vst3-readme.txt ] && cp -f doc/vst3-readme.txt "$DIST/plugins/vst3-readme.txt" || true

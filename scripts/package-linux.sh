@@ -32,6 +32,12 @@ for p in "$BUILD/S-MU2000.vst3" "$BUILD/S-MU2000.clap"; do
   fi
 done
 
+# The photo-style panel art: the gui finds art/real one level above bin/
+# (layout.cpp, find_default). Without it the standalone gui falls back to
+# the plain built-in panel.
+mkdir -p "$DIST/art"
+cp -rf art/real "$DIST/art/"
+
 cp -f LICENSE "$DIST/LICENSE.txt"
 cp -f NOTICE.txt "$DIST/NOTICE.txt"
 [ -f doc/vst3-readme.txt ] && cp -f doc/vst3-readme.txt "$DIST/plugins/vst3-readme.txt" || true
@@ -42,6 +48,7 @@ printf '# Put the path to your ROM folder on the first line, e.g.\n# /home/you/r
 rm -rf "$APPDIR"
 mkdir -p "$APPDIR/usr/bin" "$APPDIR/usr/lib" "$APPDIR/usr/share/applications" "$APPDIR/usr/share/icons/hicolor/256x256/apps"
 
+mkdir -p "$APPDIR/usr/art" && cp -rf art/real "$APPDIR/usr/art/"   # usr/bin/../art/real
 cp -f "$DIST/bin/gui" "$APPDIR/usr/bin/S-MU2000-gui" 2>/dev/null || echo "warning: no gui for AppDir" >&2
 # CLI companions ride along inside the AppImage (run via `S-MU2000*.AppImage --appimage-mount` or the tarball).
 for b in render live panel verify; do
