@@ -9,7 +9,22 @@ One `continuous` prerelease, overwritten on a schedule. Versioned releases stay 
   releases would spam tags, confuse users ("which of 13 today's builds?"), and burn Actions
   minutes. `build.yml` still validates every push; only publishing is scheduled.
 - **Schedule: every 10h + manual.** `cron: 0 */10 * * *` (~2-3 builds/day, always <1 day stale)
-  plus `workflow_dispatch`. No `on: push` publishing.
+  plus `workflow_dispatch`. No `on: push` publishing. A `freshness` job compares
+  `refs/tags/continuous` with the commit being built and skips scheduled runs when
+  main hasn't moved (manual dispatches always build).
+- **Tests gate publishing.** Every packaging job runs `make test` first (Linux under
+  `SDL_VIDEODRIVER=dummy`, like `build.yml`); `publish` needs all three jobs, so a
+  broken main never overwrites the downloads.
+- **The `continuous` tag is force-moved to the built commit each publish.**
+  `softprops/action-gh-release` only replaces assets/release metadata in place — its
+  update path (`src/github.ts`, `repos.updateRelease`) never moves `refs/tags/continuous`
+  itself, which would leave the tag and the auto-generated "Source code" archives stuck
+  on the first build. So `publish` does `git tag -f continuous <sha> && git push -f`
+  before uploading, and also passes `target_commitish`.
+- **Pinned toolchain.** Third-party actions are pinned to commit SHAs and appimagetool
+  to fixed release `1.9.1` (not its `continuous` channel, which has shipped breakage —
+  it even carries a `broken-zsyncmake` tag). Pinning the *packager* never freezes the
+  *app*: the app is still built fresh from main every run.
 - **Three assets:** `S-MU2000-windows-x64.zip`, `S-MU2000-macos-universal.zip`,
   `S-MU2000-linux-x64.tar.gz` + `S-MU2000-x86_64.AppImage` (gui). All from `make all`
   (+ `make clap` on macOS). No 32-bit, no AUv3.
@@ -28,7 +43,7 @@ One `continuous` prerelease, overwritten on a schedule. Versioned releases stay 
 S-MU2000-<os>-<arch>/
   LICENSE.txt          # copy of LICENSE (BSD-3 requires it in binary dists)
   NOTICE.txt            # copy of NOTICE.txt (vendored code attributions)
-  README-release.txt    # generated: version, ROM instructions, platform notes
+  README-release.txt    # generated: WIP/unsigned warning, version, ROM link, platform notes
   roms.txt.example      # one-line path template, never real ROMs
   bin/                  # runnable as-is, no build tree needed
   plugins/              # DAW formats
