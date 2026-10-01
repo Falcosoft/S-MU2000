@@ -34,9 +34,9 @@
 using BYTE  = uint8_t;
 using DWORD = uint32_t;
 using UINT  = uint32_t;
-// bool, agreeing with objc/objc.h's BOOL, so this header can share a
-// translation unit with Cocoa.
-using BOOL  = bool;
+// No BOOL here: nothing outside Windows uses it, and objc/objc.h defines its
+// own -- bool on arm64 but signed char on x86_64, so an alias clashed with
+// Cocoa in the x86_64 half of a universal build.
 
 // LONG is `long`, as it is in the Windows headers, rather than a fixed
 // 32-bit type. The drawing code writes things like std::max(1L, ...) with
