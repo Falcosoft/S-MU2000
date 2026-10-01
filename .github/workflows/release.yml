@@ -1,0 +1,154 @@
+# Rolling "continuous" binaries (see doc/release-builds.md).
+#
+# Publishes ONE prerelease on tag `continuous`, overwritten on a schedule
+# (every 10h) + manual dispatch. Per-push validation stays in build.yml;
+# this workflow only publishes. AUv3 is excluded (needs baked ROMs).
+# Linux ships a tarball (bin/ + plugins/) plus a gui AppImage.
+
+name: continuous-release
+
+on:
+  schedule:
+    - cron: "0 */10 * * *"
+  workflow_dispatch:
+
+concurrency:
+  group: continuous-release
+  cancel-in-progress: false
+
+permissions:
+  contents: write
+
+jobs:
+  pkg-windows:
+    runs-on: windows-latest
+    defaults:
+      run:
+        shell: msys2 {0}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: msys2/setup-msys2@v2
+        with:
+          msystem: mingw64
+          update: true
+          install: mingw-w64-x86_64-toolchain mingw-w64-x86_64-make mingw-w64-x86_64-python make
+      - run: make -j$(nproc) all
+      - run: bash scripts/package-windows.sh build dist-windows
+      - uses: actions/upload-artifact@v4
+        with:
+          name: dist-windows
+          path: dist-windows
+
+  pkg-macos:
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v4
+      - run: make -j$(sysctl -n hw.ncpu) UNIVERSAL=1 all
+      - run: make UNIVERSAL=1 clap
+      - run: bash scripts/package-macos.sh build dist-macos
+      - uses: actions/upload-artifact@v4
+        with:
+          name: dist-macos
+          path: dist-macos
+
+  pkg-linux:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - run: >
+          sudo apt-get update -qq &&
+          sudo apt-get install -y -qq build-essential pkg-config cmake ninja-build git
+          libasound2-dev libfontconfig-dev libcairo2-dev
+          libx11-dev libxext-dev libxrandr-dev libxcursor-dev libxfixes-dev libxi-dev
+          libxss-dev libxkbcommon-dev libwayland-dev libdecor-0-dev liburing-dev
+          file patchelf zsync
+      # Full SDL3 (video backends ON): the build.yml dummy-only SDL3 would
+      # ship a gui that shows nothing, so release builds its own.
+      - name: Cache SDL3 (release, full backends)
+        uses: actions/cache@v4
+        with:
+          path: ~/sdl3-release
+          key: sdl3-3.4.16-ubuntu24-full
+      - name: Build SDL3 (release)
+        run: |
+          test -f ~/sdl3-release/lib/libSDL3.so -o -f ~/sdl3-release/lib/x86_64-linux-gnu/libSDL3.so && exit 0
+          git clone --depth 1 --branch release-3.4.16 https://github.com/libsdl-org/SDL /tmp/SDL
+          cmake -S /tmp/SDL -B /tmp/SDL/build -G Ninja -DCMAKE_BUILD_TYPE=Release \
+            -DCMAKE_INSTALL_PREFIX=$HOME/sdl3-release \
+            -DSDL_SHARED=ON -DSDL_STATIC=OFF -DSDL_TESTS=OFF \
+            -DSDL_UNIX_CONSOLE_BUILD=ON
+          cmake --build /tmp/SDL/build
+          cmake --install /tmp/SDL/build
+      - run: |
+          export PKG_CONFIG_PATH="$HOME/sdl3-release/lib/pkgconfig:$HOME/sdl3-release/lib/x86_64-linux-gnu/pkgconfig"
+          export LD_LIBRARY_PATH="$HOME/sdl3-release/lib:$HOME/sdl3-release/lib/x86_64-linux-gnu"
+          make -j$(nproc) all
+      - run: bash scripts/package-linux.sh build-linux dist-linux dist-linux.AppDir
+      - name: Build AppImage
+        run: |
+          export PKG_CONFIG_PATH="$HOME/sdl3-release/lib/pkgconfig:$HOME/sdl3-release/lib/x86_64-linux-gnu/pkgconfig"
+          export LD_LIBRARY_PATH="$HOME/sdl3-release/lib:$HOME/sdl3-release/lib/x86_64-linux-gnu"
+          # Bundle the release SDL3 alongside the ldd-collected libs.
+          for d in "$HOME/sdl3-release/lib" "$HOME/sdl3-release/lib/x86_64-linux-gnu"; do
+            [ -f "$d/libSDL3.so" ] && cp -fL "$d"/libSDL3.so* dist-linux.AppDir/usr/lib/ || true
+          done
+          curl -fsSL -o /tmp/appimagetool https://github.com/AppImage/appimagetool/releases/download/continuous/appimagetool-x86_64.AppImage
+          chmod +x /tmp/appimagetool
+          VERSION="$(git rev-parse --short HEAD)" APPIMAGE_EXTRACT_AND_RUN=1 /tmp/appimagetool dist-linux.AppDir S-MU2000-x86_64.AppImage
+      - uses: actions/upload-artifact@v4
+        with:
+          name: dist-linux
+          path: dist-linux
+      - uses: actions/upload-artifact@v4
+        with:
+          name: linux-appimage
+          path: S-MU2000-x86_64.AppImage
+
+  publish:
+    needs: [pkg-windows, pkg-macos, pkg-linux]
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/download-artifact@v4
+        with:
+          path: artifacts
+      - run: |
+          SHA="$(git rev-parse --short HEAD)"
+          DATE="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+          echo "artifact tree:"; find artifacts -maxdepth 3 | sort
+          for d in artifacts/dist-windows artifacts/dist-macos artifacts/dist-linux; do
+            cat > "$d/README-release.txt" <<EOF
+          S-MU2000 continuous build $SHA ($DATE)
+          Unofficial project, not affiliated with Yamaha.
+
+          ROMs are NOT included. Extract them from your own MU2000 and point
+          the app at the folder (argv, roms.txt, or S_MU2000_ROMS).
+          See doc/manual.en.md in the source tree.
+
+          Windows: unzip and run bin/gui.exe. No MSYS2 needed (statically linked).
+          macOS: unsigned build. xattr -dr com.apple.quarantine, then right-click Open.
+            VST3 -> ~/Library/Audio/Plug-Ins/VST3, AU -> .../Components.
+          Linux: chmod +x S-MU2000-x86_64.AppImage for the gui; the tarball has
+            bin/ (render/live/...) + plugins/ (VST3/CLAP) for DAW/CLI use.
+          EOF
+          done
+          (cd artifacts/dist-windows && zip -r ../../S-MU2000-windows-x64.zip .)
+          (cd artifacts/dist-macos && zip -r -y ../../S-MU2000-macos-universal.zip .)
+          (cd artifacts/dist-linux && tar czf ../../S-MU2000-linux-x64.tar.gz .)
+          find artifacts -name '*.AppImage' -exec mv -f {} ./S-MU2000-x86_64.AppImage \;
+          chmod +x S-MU2000-x86_64.AppImage
+          ls -la S-MU2000-*
+      - uses: softprops/action-gh-release@v2
+        with:
+          tag_name: continuous
+          name: continuous build
+          prerelease: true
+          make_latest: true
+          body: |
+            Rolling build from `main` (every 10h). ROMs are never included.
+            See `README-release.txt` inside each archive.
+          files: |
+            S-MU2000-windows-x64.zip
+            S-MU2000-macos-universal.zip
+            S-MU2000-linux-x64.tar.gz
+            S-MU2000-x86_64.AppImage
