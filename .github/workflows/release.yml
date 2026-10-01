@@ -223,7 +223,7 @@ jobs:
             inside each archive for the `xattr` workaround).
 
             **ROMs are never included.** You need your own MU2000 dumps; instructions:
-            [manual.en.md — Preparing the ROMs](doc/manual.en.md) (or `README-release.txt`).
+            [manual.en.md — Preparing the ROMs](${{ github.server_url }}/${{ github.repository }}/blob/main/doc/manual.en.md#2-preparing-the-roms) (or `README-release.txt`).
           files: |
             S-MU2000-windows-x64.zip
             S-MU2000-macos-universal.zip
