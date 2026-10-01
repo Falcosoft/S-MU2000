@@ -1091,6 +1091,14 @@ void panel::draw_lcd_body(lcd_canvas &cv, const snapshot &s, const lcd_geom &g,
 			const double pitch = std::max(1.0, std::round(want / px)) * px;
 			const int bar = std::max(int(std::lround(px)), int(std::lround(thick(0.48 * pitch))));
 			const double start = std::round((sy - 0.5 * dv + 4 * (want - pitch)) / px) * px;
+			for (int y = 0; y < CELL_H; y++) {
+				const int top = int(std::lround(start + y * pitch));
+				const int bot = top + bar;
+				const bool vol = s.lcd_on && (BIT(c[y], 4) || BIT(c[y], 3));
+				const bool exp = s.lcd_on && (BIT(c[y], 1) || BIT(c[y], 0));
+				cv.rect(lx(LOW_VOL), top, lx(LOW_VOL) + lw(LOW_VOL), bot, ink(vol));
+				cv.rect(lx(LOW_EXP), top, lx(LOW_EXP) + lw(LOW_EXP), bot, ink(exp));
+			}
 		}
 
 		// パン。下の開いた円弧の中で、針が 45 度おきの 7 か所に飛ぶ。
