@@ -1082,22 +1082,15 @@ void panel::draw_lcd_body(lcd_canvas &cv, const snapshot &s, const lcd_geom &g,
 		// 実機では離れた場所に、横に長い 8 本の棒で出る
 		{
 			const u8 *c = s.dots + (0 * LCD_COLS + TOP_COLS + 2) * CELL_H;
-			// 棒の間隔は 1 画素の整数に丸め、棒の上端も画素の境目に
-			// 揃える。こうすると 8 本とも画素との位置関係が同じになり、太さが
-			// 揃う。太さの端数は、どの棒も同じだけ下の縁がぼける
+			// 棒の間隔は**画素（k）の整数**に丸め、棒の上端も k 画素の
+			// 境目に揃える。こうすると 8 本とも画素との位置関係が同じになり、
+			// 太さが揃う。k で割り切れない間隔だと棒の上端が画素の途中に
+			// 落ちてしまい、平均を取ったあと全部の棒がぼけて、間隔も
+			// 1 画素ぶんずつ動く。太さの端数は、どの棒も同じだけ下の縁がぼける
 			const double want = 8.3 * dv / 8;
-			const double pitch = std::max(1.0, std::round(want));
-			const int bar = std::max(1, int(std::lround(thick(0.48 * pitch))));
-			const double start = std::round(sy - 0.5 * dv + 4 * (want - pitch));
-			for (int y = 0; y < CELL_H; y++) {
-				// 棒の上端も画素の境目に揃える。太さが揃うため
-				const int top = int(std::lround(start + y * pitch));
-				const int bot = top + bar;
-				const bool vol = s.lcd_on && (BIT(c[y], 4) || BIT(c[y], 3));
-				const bool exp = s.lcd_on && (BIT(c[y], 1) || BIT(c[y], 0));
-				cv.rect(lx(LOW_VOL), top, lx(LOW_VOL) + lw(LOW_VOL), bot, ink(vol));
-				cv.rect(lx(LOW_EXP), top, lx(LOW_EXP) + lw(LOW_EXP), bot, ink(exp));
-			}
+			const double pitch = std::max(1.0, std::round(want / px)) * px;
+			const int bar = std::max(int(std::lround(px)), int(std::lround(thick(0.48 * pitch))));
+			const double start = std::round((sy - 0.5 * dv + 4 * (want - pitch)) / px) * px;
 		}
 
 		// パン。下の開いた円弧の中で、針が 45 度おきの 7 か所に飛ぶ。

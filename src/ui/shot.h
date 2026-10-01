@@ -99,6 +99,15 @@ inline int write_shot(const std::string &path, int w, int h, bridge &br,
 	// WARP: pixels with no window and no GPU.
 	imshell::dx11_state st{};
 	if (imshell::dx11_start(st, nullptr)) {
+		// Outlives dx11_stop() below, not just Render(): the panel's textures
+		// have to still be registered when the backend tears down, because
+		// ImGui_ImplDX11_InvalidateDeviceObjects() walks
+		// ImGui::GetPlatformIO().Textures -- a list built at end of frame that
+		// still points at them -- and dereferences each entry. A rig scoped
+		// inside the block below dies first, its ImTextureData are freed, and
+		// that walk reads freed memory: the access violation this used to be.
+		shot_detail::rig rig;
+
 		ID3D11Texture2D *tex = nullptr, *stage = nullptr;
 		D3D11_TEXTURE2D_DESC td{};
 		td.Width = UINT(w);
@@ -115,9 +124,6 @@ inline int write_shot(const std::string &path, int w, int h, bridge &br,
 		if (SUCCEEDED(st.dev->CreateTexture2D(&td, nullptr, &tex)) &&
 		    SUCCEEDED(st.dev->CreateTexture2D(&sd, nullptr, &stage)) &&
 		    SUCCEEDED(st.dev->CreateRenderTargetView(tex, nullptr, &st.rtv))) {
-			// outlives Render(), which happens inside dx11_paint: see
-			// shot_detail::rig
-			shot_detail::rig rig;
 			imshell::dx11_paint(st, w, h, [&](ImDrawList *dl) {
 				shot_frame(rig, dl, st.fonts, w, h, grid, lcd_only, layout_path, br);
 			});
