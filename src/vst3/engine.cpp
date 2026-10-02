@@ -13,6 +13,7 @@
 
 #include "compat/paths.h"
 #include "compat/platform.h"
+#include "roms_dir.h"
 
 #include <algorithm>
 #include <chrono>
@@ -40,12 +41,12 @@ namespace {
 // The OS answers now come from compat/paths.h: where this image lives, what
 // the environment says, and where the per-user settings directory is. Only the
 // search order below is this file's business.
-
-// そのディレクトリが ROM 置き場かどうか
-bool has_roms(const std::string &dir)
-{
-	return !dir.empty() && smu2000::is_file(smu2000::join(dir, "mu2000_flash.bin"));
-}
+//
+// What counts as a ROM directory comes from roms_dir.h, which the AUv3's
+// container app also uses to put a set in place. It asks for the whole set
+// (the program ROM and the four wave ROMs), not just a program ROM: a
+// half-copied directory must not shadow a complete one, since the search stops
+// at the first hit and a partial one cannot play anything.
 
 // roms.txt に書かれた場所を読む（1 行目だけ）
 std::string read_pointer_file(const std::string &path)
@@ -106,31 +107,9 @@ std::string find_roms(std::string &tried)
 	if (!ev.empty())
 		cand.push_back(ev);
 
-	// The address of a function in this image is what locates the image:
-	// a module handle on Windows, the Mach-O header on macOS
-	const std::string dir = smu2000::module_dir(reinterpret_cast<const void *>(&logf));
-	if (!dir.empty()) {
-		// 2. バンドルの Resources。
-		//    <名前>.vst3/Contents/x86_64-win/ に DLL がいるので 1 つ上
-		//    (macOS puts the binary in Contents/MacOS, also one level up)
-		cand.push_back(smu2000::join(dir, "../Resources"));
-		cand.push_back(smu2000::join(dir, "../Resources/roms"));
-		// 3. DLL のすぐ横
-		cand.push_back(smu2000::join(dir, "roms"));
-		cand.push_back(dir);
-		// 4. 場所を書いた紙
-		const std::string notes[2] = { smu2000::join(dir, "../Resources/roms.txt"),
-		                               smu2000::join(dir, "roms.txt") };
-		for (const std::string &p : notes) {
-			const std::string s = read_pointer_file(p);
-			if (!s.empty())
-				cand.push_back(s);
-		}
-	}
-
-	// 5. The fixed places, following where macOS puts an application's own data
-	//    (Application Support, Documents). Per-user comes first and machine-wide
-	//    last, so a user's own copy wins
+	// 2. The user's own files, before the bundle's. A copy the user put there
+	//    is the one they chose, while a bundle copy only exists because a
+	//    build baked it in -- so theirs wins when both are present.
 	const std::string local = smu2000::config_dir();
 	if (!local.empty()) {
 		// A note naming the directory. Someone using this from a DAW has nowhere
@@ -145,7 +124,30 @@ std::string find_roms(std::string &tried)
 	if (!home.empty())
 		cand.push_back(smu2000::join(home, "Documents/S-MU2000/roms"));
 
-	// 6. The machine-wide places. **Put the ROMs here once and every user of the
+	// 3. Next to the binary, which is where a checkout works from rather than
+	//    an install. The address of a function in this image is what locates
+	//    the image: a module handle on Windows, the Mach-O header on macOS
+	const std::string dir = smu2000::module_dir(reinterpret_cast<const void *>(&logf));
+	if (!dir.empty()) {
+		// 3a. バンドルの Resources。
+		//     <名前>.vst3/Contents/x86_64-win/ に DLL がいるので 1 つ上
+		//     (macOS puts the binary in Contents/MacOS, also one level up)
+		cand.push_back(smu2000::join(dir, "../Resources"));
+		cand.push_back(smu2000::join(dir, "../Resources/roms"));
+		// 3b. DLL のすぐ横
+		cand.push_back(smu2000::join(dir, "roms"));
+		cand.push_back(dir);
+		// 4. 場所を書いた紙
+		const std::string notes[2] = { smu2000::join(dir, "../Resources/roms.txt"),
+		                               smu2000::join(dir, "roms.txt") };
+		for (const std::string &p : notes) {
+			const std::string s = read_pointer_file(p);
+			if (!s.empty())
+				cand.push_back(s);
+		}
+	}
+
+	// 5. The machine-wide places. **Put the ROMs here once and every user of the
 	//    machine, and every instance of either plug-in, finds them.** The AU is
 	//    one bundle in Components, shared by all accounts, so this is its
 	//    intended home (/Library/Application Support, %ProgramData% on Windows)
@@ -161,10 +163,13 @@ std::string find_roms(std::string &tried)
 	}
 
 	for (const std::string &c : cand) {
-		const std::string p = smu2000::full_path(c);
-		if (has_roms(p))
-			return p;
-		tried += "  " + p + "\n";
+		// One conversion, here: the candidate list is still strings (it comes
+		// from compat/paths.h, which speaks strings), and everything past this
+		// point is a path. has_roms takes the path, never the string.
+		const smu2000::fs::path p = smu2000::fs::path(smu2000::full_path(c));
+		if (smu2000::has_roms(p))
+			return p.string();
+		tried += "  " + p.string() + "\n";
 	}
 	return {};
 }
