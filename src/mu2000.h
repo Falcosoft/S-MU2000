@@ -252,6 +252,7 @@ public:
 	// 台数が増えたら run_sample の中で 1 本に戻し、減ったらまた別スレッドにする
 	void set_threaded(bool on);
 	bool threaded() const { return m_slave_thread.joinable(); }
+	bool threading_requested() const { return m_want_threaded; }
 
 	// 1 サンプル（44.1kHz 相当）ぶん進めて、DAC 出力を返す。
 	// 値は MAME 内部と同じ目盛りで、全振幅が DAC_FULL_SCALE。

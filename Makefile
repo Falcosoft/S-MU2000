@@ -163,6 +163,29 @@ endif
 endif
 BUILD ?= build
 
+# Menu tests need no ROMs or playback hardware. Opt in to opening real
+# outputs with silence: make check-audio-output AUDIO_DEVICES=1.
+ifeq ($(PLATFORM),windows)
+AUDIO_OUTPUT_TEST_SRC := src/ui/audio_out.cpp
+AUDIO_OUTPUT_TEST_LIBS := -lole32 -lavrt
+else ifeq ($(PLATFORM),macos)
+AUDIO_OUTPUT_TEST_SRC := src/ui/audio_out_mac.cpp
+AUDIO_OUTPUT_TEST_LIBS := -framework AudioToolbox -framework CoreAudio -framework CoreFoundation
+else
+AUDIO_OUTPUT_TEST_SRC := src/ui/audio_out_linux.cpp
+AUDIO_OUTPUT_TEST_LIBS := -lasound
+endif
+
+$(BUILD)/audio_output_test$(EXE): tools/test_audio_output.cpp $(AUDIO_OUTPUT_TEST_SRC) \
+                               src/ui/audio_output_switch.h src/ui/audio_out.h \
+                               src/ui/menu.h src/ui/texts.h src/ui/texts_en.h src/ui/texts_ja.h
+	@mkdir -p $(dir $@)
+	$(CXX) $(CXXFLAGS) -o $@ tools/test_audio_output.cpp $(AUDIO_OUTPUT_TEST_SRC) $(LDFLAGS) $(AUDIO_OUTPUT_TEST_LIBS)
+
+.PHONY: check-audio-output
+check-audio-output: $(BUILD)/audio_output_test$(EXE)
+	$(WINE) $(BUILD)/audio_output_test$(EXE) $(if $(AUDIO_DEVICES),--devices)
+
 # The per-user data directory -- the same place compat/paths.h's config_dir()
 # points at, where roms/, nvram/ and the .ini files already live. The panel art
 # goes in a panel/ beside them, and find_default() looks there (step 3), which

@@ -73,6 +73,10 @@ struct ui_texts {
 	const char *menu_no_devices;
 	const char *menu_ain_title;
 	const char *menu_no_ain;
+	const char *menu_audio_title;
+	const char *menu_audio_default;
+	const char *menu_no_audio;
+	const char *audio_switch_failed_fmt; // %s: device and backend error
 	const char *menu_out_mu;
 	const char *menu_thru_a;
 	const char *menu_thru_b;
