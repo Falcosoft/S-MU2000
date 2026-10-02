@@ -1045,6 +1045,7 @@ check-au: $(BUILD)/aubprobe$(EXE) $(AU_BIN)
 #
 #   make auv3           build build/S-MU2000.app (with the .appex inside)
 #   make install-auv3   copy it to ~/Applications and launch once (registers it)
+#   make auv3-roms      put AUV3_ROMS where the extension can read them
 #   make auval3         validate the plug-in (aumu SMU3 Trbh)
 
 AUV3_APP   := $(BUILD)/S-MU2000.app
@@ -1067,20 +1068,32 @@ AUV3_OBJS := $(AUV3_OBJS:%.mm=$(BUILD)/auv3obj/%.o)
 #   security find-identity -v -p codesigning   lists local certificates
 CODESIGN_ID ?= -
 
-# Copy ROMs into the bundle.
+# ROMs in the bundle.
 #
-# A sandboxed extension can only read its own bundle. The AUv3 extension
-# lives in a sandbox (it would not register otherwise), so $HOME points
-# at the container and neither ~/Library/Application Support nor whatever
-# roms.txt names is reachable. Baking ROMs in is the only way an AUv3 sings.
+# **Off by default.** The images are Yamaha's, so nothing we hand out may carry
+# them -- and an AUv3 cannot be handed out alone anyway (macOS only recognizes
+# one inside an app), which made baking them the reason the plug-in could not
+# be distributed at all.
 #
-#   make auv3 AUV3_ROMS=/path/to/roms
+# A sandboxed extension does read its own container: $HOME points at
+# ~/Library/Containers/<appex id>/Data, so config_dir() (src/compat/paths.h)
+# lands on .../Data/Library/Application Support/S-MU2000 -- the same directory
+# the engine writes log.txt and boot snapshots into. The container app puts the
+# files there once (src/auv3/main_app.mm, "Install ROMs..."), and after that the
+# engine finds them like any other per-user copy.
 #
-# ROMs are never redistributed, so they stay out of git (roms/ is ignored).
-# Local builds bake them in from ./roms by default so the unit always sings;
-# pass another path, empty to leave the bundle as it is, or none to take them
-# out (without them the unit registers and renders, silently)
-AUV3_ROMS ?= roms
+#   make auv3                      a bundle with no ROMs. This is what gets
+#                                  distributed
+#   make auv3 AUV3_ROMS=roms       also bake the local ROMs into the bundle.
+#                                  Useful while developing (nothing to install,
+#                                  works in any sandbox), but the bundle then
+#                                  cannot be given to anyone else
+#   make auv3 AUV3_ROMS=none       take baked ROMs back out
+#   make auv3-roms AUV3_ROMS=roms  put them in the extension's own Application
+#                                  Support directory instead of the bundle
+#
+# ROMs are never redistributed, so they stay out of git (roms/ is ignored)
+AUV3_ROMS ?=
 
 AUV3_FLAGS := -fobjc-arc
 AUV3_FW    := -framework Foundation -framework AudioToolbox -framework AVFoundation \
@@ -1106,9 +1119,6 @@ $(BUILD)/auv3obj/%.o: %.mm
 AUV3_PANEL := $(AUV3_APPEX)/Contents/Resources/panel/panel.txt
 
 auv3: $(AUV3_HOST) $(BUILD)/autest$(EXE) $(AUV3_PANEL)
-$(AUV3_PANEL): $(wildcard art/real/*.png) art/real/panel.txt
-	@mkdir -p $(dir $@)
-	@cp -f art/real/*.png art/real/panel.txt $(dir $@)
 	# ROMs into the bundle. Before signing (adding them later breaks the seal).
 	# An explicitly empty AUV3_ROMS leaves a bare install alone.
 	# AUV3_ROMS=none takes them out
@@ -1143,13 +1153,22 @@ endif
 	# would leave a plist-only edit stale under its signature
 	@cp -f packaging/auv3-appex-Info.plist $(AUV3_APPEX)/Contents/Info.plist
 	@cp -f packaging/auv3-app-Info.plist $(AUV3_APP)/Contents/Info.plist
-	# The App Sandbox entitlement is required. A macOS app extension outside
-	# the sandbox never registers. Certificate kind does not matter (ad-hoc works)
+	# The extension needs the App Sandbox entitlement: a macOS app extension
+	# outside the sandbox never registers. The container app is signed without
+	# it on purpose, so it can write the ROMs into the extension's container
+	# (packaging/auv3-app.entitlements). Certificate kind does not matter
+	# (ad-hoc works)
 	@codesign --force --sign "$(CODESIGN_ID)" --timestamp=none \
 	          --entitlements packaging/auv3-appex.entitlements $(AUV3_APPEX)
 	@codesign --force --sign "$(CODESIGN_ID)" --timestamp=none \
 	          --entitlements packaging/auv3-app.entitlements $(AUV3_APP)
 	@echo "出来た: $(AUV3_APP)"
+
+# The panel art the plug-in draws with. Its own rule, so that adding it does not
+# land in the middle of the auv3 recipe above (they share one target)
+$(AUV3_PANEL): $(wildcard art/real/*.png) art/real/panel.txt
+	@mkdir -p $(dir $@)
+	@cp -f art/real/*.png art/real/panel.txt $(dir $@)
 
 # The .appex itself. Entry point is NSExtensionMain (it owns no main())
 $(AUV3_BIN): $(OBJS) $(BUILD)/src/mu2000.o $(AUV3_OBJS) $(MAC_PC_OBJS)
@@ -1161,7 +1180,8 @@ $(AUV3_BIN): $(OBJS) $(BUILD)/src/mu2000.o $(AUV3_OBJS) $(MAC_PC_OBJS)
 # The container app. Silent. Exists only to carry the .appex into registration
 $(AUV3_HOST): $(AUV3_BIN) $(BUILD)/auv3obj/src/auv3/main_app.o
 	@mkdir -p $(dir $@)
-	$(CXX) $(CXXFLAGS) -o $@ $(BUILD)/auv3obj/src/auv3/main_app.o $(LDFLAGS) -framework Cocoa
+	$(CXX) $(CXXFLAGS) -o $@ $(BUILD)/auv3obj/src/auv3/main_app.o $(LDFLAGS) \
+	      -framework Cocoa -framework Security
 	@cp -f packaging/auv3-app-Info.plist $(AUV3_APP)/Contents/Info.plist
 	@mkdir -p $(AUV3_APP)/Contents/Resources
 	@cp -f LICENSE $(AUV3_APP)/Contents/Resources/LICENSE.txt
@@ -1174,6 +1194,42 @@ install-auv3: auv3
 	cp -R $(AUV3_APP) "$(HOME)/Applications/"
 	@echo "入れた: $(HOME)/Applications/S-MU2000.app"
 	@echo "一度起動すると DAW の一覧に出る（open してよいか聞かれたら許可する）"
+	@echo "ROM は入れていない。音を出すには窓の「Install ROMs...」で場所を指定する"
+	@echo "（あるいは make auv3-roms AUV3_ROMS=roms / make auv3 AUV3_ROMS=roms）"
+
+# Put the ROMs where a sandboxed .appex can read them: the extension's own
+# Application Support directory, which is inside its container. No ROMs in the
+# bundle, so this is what a distributed app relies on. The app's own window
+# does the same thing (and asks first); this is for a script or a machine with
+# no GUI session. The container exists once the app has been launched, and
+# mkdir -p makes it either way.
+#
+# AUV3_APPEX_ID is the extension's bundle id, which is what names its container.
+# Read out of the Info.plist rather than written here, so the two cannot drift:
+# a plist-only edit is the kind that gets made and forgotten. Override it only
+# for an odd setup (the app itself reads the id out of its own PlugIns).
+AUV3_APPEX_ID ?= $(shell /usr/libexec/PlistBuddy -c "Print :CFBundleIdentifier" \
+                          packaging/auv3-appex-Info.plist 2>/dev/null)
+AUV3_SUPPORT   = $(HOME)/Library/Containers/$(AUV3_APPEX_ID)/Data/Library/Application Support/S-MU2000
+
+auv3-roms:
+ifneq ($(strip $(AUV3_ROMS)),)
+	@test -f "$(AUV3_ROMS)/mu2000_flash.bin" || \
+	  { echo "AUV3_ROMS に mu2000_flash.bin が無い: $(AUV3_ROMS)"; exit 1; }
+	@mkdir -p "$(AUV3_SUPPORT)/roms/dump"
+	@cp -f "$(AUV3_ROMS)/mu2000_flash.bin" "$(AUV3_SUPPORT)/roms/"
+	@for f in xv364a0.ic49 xv365a0.ic50 xw848a0.ic53 xw849a0.ic54; do \
+	   test -f "$(AUV3_ROMS)/dump/$$f" || { echo "dump/$$f が無い"; exit 1; }; \
+	   cp -f "$(AUV3_ROMS)/dump/$$f" "$(AUV3_SUPPORT)/roms/dump/"; \
+	 done
+	@for f in standin/sin-table.bin hd44780u_b04.bin standin/hd44780u_b04.bin; do \
+	   test -f "$(AUV3_ROMS)/$$f" && cp -f "$(AUV3_ROMS)/$$f" "$(AUV3_SUPPORT)/roms/$$f"; \
+	   true; \
+	 done
+	@echo "入れた: $(AUV3_SUPPORT)/roms"
+else
+	@echo "AUV3_ROMS が空。make auv3-roms AUV3_ROMS=roms"
+endif
 
 # Register in-process (no .appex) to check ports and sound on the spot
 $(BUILD)/autest$(EXE): $(OBJS) $(BUILD)/src/mu2000.o $(BUILD)/src/smf.o $(AUV3_OBJS) \

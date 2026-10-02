@@ -4,6 +4,7 @@
 
 #include "mu2000.h"
 #include "lcdfont.h"
+#include "roms_dir.h"
 
 #if defined(__SSE2__) || defined(_M_X64) || defined(__x86_64__)
 #include <xmmintrin.h>
@@ -421,7 +422,8 @@ void mu2000::set_sintab_rom(u16rom p)
 
 
 const char *const mu2000::WAVE_ROM_NAMES[4] = {
-	"xv364a0.ic49", "xv365a0.ic50", "xw848a0.ic53", "xw849a0.ic54"
+	smu2000::kWaveRomNames[0], smu2000::kWaveRomNames[1],
+	smu2000::kWaveRomNames[2], smu2000::kWaveRomNames[3]
 };
 
 bool mu2000::load_wave(const std::string &dir)
