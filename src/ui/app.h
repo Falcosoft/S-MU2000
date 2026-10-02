@@ -27,6 +27,7 @@
 
 #include "ui/audio_in.h"
 #include "ui/audio_out.h"
+#include "ui/audio_output_switch.h"
 #include "ui/bridge.h"
 #include "ui/engine.h"
 #include "ui/fx_editor.h"
@@ -110,6 +111,11 @@ public:
 	midi_out    edit_out;
 	std::string out_keep, out_keep_b, out_keep_mu;
 	std::string audio_name;          // the audio device, by name
+	std::vector<std::string> audio_menu_devices;
+	std::atomic<bool> audio_ready{false};
+	int audio_latency = 20;
+	bool audio_exclusive = false;
+	bool audio_failed = false; // firmware is booted, but its output failed
 	std::string ain_name;            // the recording device, by name
 	std::string ain_keep;
 	std::string card_path;           // the SmartMedia in the slot, by path
@@ -327,7 +333,7 @@ public:
 		if (panel.on_card_slot(x, y))
 			return menu_card(menu_snapshot());
 		if (panel.on_phones(x, y))
-			return menu_phones(eng && eng->analog.load());
+			return menu_phones(menu_snapshot());
 		if (panel.on_ad_input(x, y))
 			return menu_ain_only(audio_in::list(), ain_name);
 		return menu_ports(menu_snapshot());
@@ -735,6 +741,59 @@ public:
 
 	// ---- the rest of the menu
 
+	// Same backend contract on Windows, macOS and Linux. Device names come
+	// from the menu snapshot, never from a new enumeration after the click.
+	void choose_audio(int dev)
+	{
+		if (!audio_ready.load() || !out || !eng || !state || state->load() == 0)
+			return;
+		if (dev >= 0 && size_t(dev) >= audio_menu_devices.size())
+			return;
+		const std::string wanted = dev < 0 ? std::string() : audio_menu_devices[size_t(dev)];
+		join_reboot();
+		if (state->load() != 1 && !audio_failed)
+			return;
+		// Pause emulation while opening outputs; their initial callbacks may
+		// run before start() returns. Resume the existing machine afterward.
+		eng->state.store(0);
+		while (eng->in_fill.load())
+			smu2000::sleep_ms(1);
+#if defined(__APPLE__)
+		// The slave must leave the old AudioUnit's workgroup before that
+		// unit is disposed. Keep the threading policy, not just its current
+		// admission state (the instance limit may have parked the slave).
+		const bool threaded = eng->mu.threading_requested();
+		eng->mu.set_threaded(false);
+		eng->mu.set_realtime_workgroup(nullptr);
+#endif
+		const auto r = switch_audio_output(*out, audio_latency,
+			[this](s16 *o, u32 n) { eng->fill(o, n); },
+			audio_exclusive, wanted, audio_name);
+#if defined(__APPLE__)
+		if (r.selected || r.restored)
+			eng->mu.set_realtime_workgroup(out->realtime_workgroup());
+		eng->mu.set_threaded(threaded);
+#endif
+		audio_failed = !r.selected && !r.restored;
+		if (!audio_failed)
+			eng->state.store(1); // also recover a failed output at startup
+		if (r.selected) {
+			audio_name = wanted;
+			save_settings();
+			say_audio_opened(audio_exclusive);
+		} else {
+			if (!r.restored) {
+				eng->message = r.error;
+				eng->state.store(2);
+				eng->publish();
+			}
+			char error[2048];
+			std::snprintf(error, sizeof(error), UI_TEXT(audio_switch_failed_fmt,
+			              "Cannot switch audio output:\n%s"), r.error.c_str());
+			menu_error(error);
+		}
+	}
+
 	// Throwing the settings away means rebooting the machine, which takes
 	// tens of seconds, so it runs on its own thread (joined first: two
 	// boots at once would both be writing the machine)
@@ -780,6 +839,11 @@ public:
 		s.midi_ins = midi_in::list();
 		s.midi_outs = midi_out::list();
 		s.audio_ins = audio_in::list();
+		s.audio_outs = audio_out::list();
+		audio_menu_devices = s.audio_outs;
+		s.audio_ready = audio_ready.load() && state && (state->load() == 1 || audio_failed);
+		if (s.audio_ready)
+			s.audio_name = audio_name;
 		for (int p = 0; p < 4; p++)
 			s.in_dev[p] = in_dev[p];
 		s.out_dev = out_dev;
@@ -793,6 +857,7 @@ public:
 		s.ready = eng && state && state->load() == 1;
 		s.native_fx = eng && eng->native_fx.load();
 		s.native_engine = eng && eng->native_engine.load();
+		s.analog = eng && eng->analog.load();
 		return s;
 	}
 
@@ -814,6 +879,8 @@ public:
 		else if (id >= ID_OUTB_BASE && id < ID_OUTB_BASE + 256)       choose_out_b(id - ID_OUTB_BASE);
 		else if (id == ID_AIN_NONE)                                   choose_ain(-1);
 		else if (id >= ID_AIN_BASE && id < ID_AIN_BASE + 256)         choose_ain(id - ID_AIN_BASE);
+		else if (id == ID_AUDIO_DEFAULT)                              choose_audio(-1);
+		else if (id >= ID_AUDIO_BASE && id < ID_AUDIO_BASE + 256)     choose_audio(id - ID_AUDIO_BASE);
 		else if (id == ID_CARD_OPEN)                                  do_card_open();
 		else if (id == ID_CARD_EJECT)                                 { eject_card(); save_settings(); }
 		else if (id >= ID_CARD_NEW16 && id <= ID_CARD_NEW128)         new_card(16u << (id - ID_CARD_NEW16));
@@ -1049,7 +1116,18 @@ public:
 		// Remember the port that was actually opened, by name. After the
 		// MIDI ports above, or the settings written here would carry an
 		// empty MIDI name and the next start would come up with no ports
-		audio_name = out->device_name();
+		// Empty stays empty, so System default is still the default next time.
+		// Normalize CLI substring matches to a full menu label (ALSA labels
+		// include a description after the PCM name returned by device_name()).
+		if (!audio_name.empty()) {
+			const std::string opened = out->device_name();
+			audio_name = opened;
+			for (const auto &name : audio_out::list())
+				if (name == opened || name.substr(0, name.find("  (")) == opened) {
+					audio_name = name;
+					break;
+				}
+		}
 #if defined(__APPLE__)
 		// The parallel slave thread joins the output unit's audio workgroup
 		// from here (Apple's parallel real-time threads pattern; the join
@@ -1164,6 +1242,8 @@ public:
 	        const window_options &wo)
 	{
 		keep_settings = a.nomidi;
+		audio_latency = a.latency;
+		audio_exclusive = oo.exclusive;
 		setup_for_window(a, wo, oo.factory);
 
 		// The remembered ports open on this thread, while the machine boots
@@ -1195,8 +1275,11 @@ public:
 			eng->state.store(1);
 			eng->publish();
 
-			if (!start_audio(a.latency, oo.exclusive))
+			if (!start_audio(a.latency, oo.exclusive)) {
+				audio_failed = true;
+				audio_ready.store(true); // PHONES can recover by picking another output
 				return;
+			}
 			say_audio_opened(oo.exclusive);
 			// A/D INPUT: open the recording device that was picked last time
 			start_ad();
@@ -1205,6 +1288,7 @@ public:
 				play_song(a.play_path);
 			say_audio_running();
 			std::fflush(stdout);
+			audio_ready.store(true); // all startup writes finish before UI switching
 		});
 
 		// --editor and friends, alongside the panel

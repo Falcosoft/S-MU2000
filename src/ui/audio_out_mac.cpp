@@ -117,15 +117,19 @@ std::string lowered(const std::string &s)
 // The output whose name contains `want`, or the system default when nothing was
 // asked for. Matching a part of a name is what the Windows side does, and it is
 // what --audio documents
-AudioDeviceID find_device(const std::string &want)
+AudioDeviceID find_device(const std::string &want, bool exact)
 {
 	if (want.empty())
 		return default_output_device();
 
 	const std::string needle = lowered(want);
-	for (AudioDeviceID d : output_devices())
-		if (lowered(name_of(d)).find(needle) != std::string::npos)
+	const auto devices = output_devices();
+	for (int pass = 0; pass < (exact ? 1 : 2); pass++)
+	for (AudioDeviceID d : devices) {
+		const std::string name = lowered(name_of(d));
+		if (pass == 0 ? name == needle : name.find(needle) != std::string::npos)
 			return d;
+	}
 	return kAudioObjectUnknown;
 }
 
@@ -349,7 +353,7 @@ audio_out::~audio_out()
 {
 	stop();
 }bool audio_out::start(int latency_ms, fill_fn fill, std::string &err, bool exclusive,
-                      const std::string &device, bool raw)
+                      const std::string &device, bool raw, bool exact)
 {
 	(void)raw;                    // nothing to bypass on this side (audio_out.h)
 	if (m_impl && m_impl->running.load())
@@ -358,7 +362,7 @@ audio_out::~audio_out()
 
 	// The port to open. Looked up first, so a name that matches nothing is
 	// reported before anything is opened
-	const AudioDeviceID dev = find_device(device);
+	const AudioDeviceID dev = find_device(device, exact);
 	if (dev == kAudioObjectUnknown) {
 		err = device.empty() ? "音声の出口が見つからない"
 		                     : "その名前の音声の出口が見つからない: " + device;
