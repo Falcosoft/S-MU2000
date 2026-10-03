@@ -2,9 +2,9 @@
 //
 // The machine's front panel inside an NSView, for the macOS plug-in formats.
 //
-// There is only ever one panel. src/ui/panel.cpp draws it, compat/gdi_mac.cpp
-// puts CoreGraphics underneath, and smu2000::vst3::plug_view holds the whole
-// thing together and takes the mouse and the keys. What differs between the
+// There is only ever one panel. src/ui/panel.cpp draws it into an ImDrawList,
+// ui/imgui_shell.h puts Metal underneath, and smu2000::vst3::plug_view holds
+// the whole thing together and takes the mouse and the keys. What differs between the
 // formats is only *how a host asks for a view*:
 //
 //   VST3   IPlugView::attached(), with the host's own NSView as the parent
@@ -17,9 +17,10 @@
 // is what this file is. Keeping it in one place is what makes the AUv2 and the
 // AUv3 editors literally the same editor rather than two that look alike.
 //
-// Objective-C++ only, and it must not pull in compat/gdi.h: Cocoa and the
-// drawing layer both define BOOL, and Quickdraw defines Polygon. plug_view's
-// entry points are all opaque (void *), which is what allows that.
+// Objective-C++ only, and it must not pull in the panel's headers: those reach
+// compat/gdi.h, whose non-Windows vocabulary (BOOL, POINT) is nothing this file
+// needs and would sit alongside Cocoa's own. plug_view's entry points are all
+// opaque (void *), which is what allows that.
 
 #ifndef S_MU2000_VST3_PANEL_NSVIEW_H
 #define S_MU2000_VST3_PANEL_NSVIEW_H
@@ -36,8 +37,8 @@ class engine;
 // The panel's own size, and the smallest a host may ask for before it is given
 // the panel's size rather than a squeezed one. The same numbers and the same
 // clamping the VST3 view applies in onSize() / checkSizeConstraint()
-constexpr int kPanelWidth  = 1400;
-constexpr int kPanelHeight = 360;
+constexpr int kPanelWidth  = 1000;
+constexpr int kPanelHeight = 400;
 constexpr int kPanelMinW   = 640;
 constexpr int kPanelMinH   = 180;
 

@@ -204,7 +204,7 @@ audio_out::~audio_out()
 }
 
 bool audio_out::start(int latency_ms, fill_fn fill, std::string &err, bool exclusive,
-                      const std::string &device, bool raw)
+                      const std::string &device, bool raw, bool exact)
 {
 	(void)raw;          // ALSA には「エンジンを飛ばす」に当たるものが無い
 	hush_alsa();
@@ -220,8 +220,12 @@ bool audio_out::start(int latency_ms, fill_fn fill, std::string &err, bool exclu
 	if (!want.empty()) {
 		const std::string w = lowered(want);
 		std::string picked;
-		for (const std::string &line : list()) {
-			if (lowered(line).find(w) == std::string::npos)
+		const auto names = list();
+		for (int pass = 0; pass < (exact ? 1 : 2) && picked.empty(); pass++)
+		for (const std::string &line : names) {
+			const std::string name = lowered(line);
+			if (pass == 0 ? name != w && name.substr(0, name.find("  (")) != w
+			              : name.find(w) == std::string::npos)
 				continue;
 			picked = line.substr(0, line.find("  ("));
 			break;

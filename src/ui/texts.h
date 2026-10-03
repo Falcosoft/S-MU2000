@@ -1,6 +1,6 @@
 // license:BSD-3-Clause
 //
-// Display strings for the GDI panel pages and the main window around
+// Display strings for the panel pages and the main window around
 // them (strip, popup menus, status line). The struct below is the source
 // of truth: changing a member changes every platform at once, and shared
 // code only ever reads ui::texts().
@@ -73,6 +73,10 @@ struct ui_texts {
 	const char *menu_no_devices;
 	const char *menu_ain_title;
 	const char *menu_no_ain;
+	const char *menu_audio_title;
+	const char *menu_audio_default;
+	const char *menu_no_audio;
+	const char *audio_switch_failed_fmt; // %s: device and backend error
 	const char *menu_out_mu;
 	const char *menu_thru_a;
 	const char *menu_thru_b;
@@ -168,6 +172,7 @@ struct ui_texts {
 	const char *xgui_no_rom_names;
 	const char *xgui_bank_diff_fmt;  // %d
 	const char *xgui_no_bank_kit;
+	const char *xgui_drum_pick_kit;
 	const char *xgui_no_bank_norom;
 	const char *xgui_no_bank;
 	const char *xgui_other;
@@ -201,6 +206,27 @@ struct ui_texts {
 	const char *ed_col_vol;
 	const char *ed_tab_mixer;
 	const char *ed_tab_part;
+	const char *ed_tab_drum;
+	const char *ed_tab_sysex;
+	const char *sxd_hint;
+	const char *sxd_clear;
+	const char *sxd_send_all_out;
+	const char *sxd_send_all_in;
+	const char *sxd_sent_fmt;
+	const char *sxd_send_out;
+	const char *sxd_send_out_tip;
+	const char *sxd_send_in;
+	const char *sxd_send_in_tip;
+	const char *sxd_sent_line;
+	const char *sxd_played_line;
+	const char *drum_used_by;
+	const char *drum_none;
+	const char *drum_reset;
+	const char *drum_names_from_fmt;
+	const char *drum_names_hint;
+	const char *drum_plain_note;
+	const char *drum_dblclick_hint;
+	const char *drum_no_user_hint;
 	const char *ed_knobs_on;
 	const char *ed_knobs_off;
 	// Part voice window (part_shapes.cpp).
@@ -210,6 +236,23 @@ struct ui_texts {
 	const char *ps_hint_graph;       // may contain \n
 	const char *ps_tab_shape;
 	const char *ps_tab_all;
+	const char *ps_tab_drum;
+	const char *ps_out_label;
+	const char *ps_out_panel;
+	const char *ps_out_hint;
+	const char *ps_out_sent_fmt;
+	const char *ps_out_no_rcv;
+	const char *ps_drum_not;
+	const char *ps_drum_plain;
+	const char *ps_drum_mode_hint;
+	const char *ps_drum_play;
+	const char *ps_drum_follow;
+	const char *ps_drum_title_mix;
+	const char *ps_drum_title_filter;
+	const char *ps_drum_title_env;
+	const char *ps_drum_no_shape;
+	const char *ps_drum_env_fmt;
+	const char *ps_drum_pitch_fmt;
 	const char *ps_title_vib;
 	const char *ps_title_wobble;
 	const char *ps_about_wobble;

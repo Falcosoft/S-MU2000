@@ -50,6 +50,25 @@ void write_wav(const std::string &path, const std::vector<s16> &pcm, u32 rate)
 	std::fclose(f);
 }
 
+// 32bit 浮動小数の WAV（--float）。全振幅を 1.0 とする
+void write_wav_float(const std::string &path, const std::vector<float> &pcm, u32 rate)
+{
+	std::FILE *f = std::fopen(path.c_str(), "wb");
+	if (!f) return;
+	const unsigned bytes = unsigned(pcm.size() * 4);
+	auto u32w = [&](unsigned v) { unsigned char b[4] = { (unsigned char)v, (unsigned char)(v >> 8),
+	                                                     (unsigned char)(v >> 16), (unsigned char)(v >> 24) };
+	                              std::fwrite(b, 1, 4, f); };
+	auto u16w = [&](unsigned v) { unsigned char b[2] = { (unsigned char)v, (unsigned char)(v >> 8) };
+	                              std::fwrite(b, 1, 2, f); };
+	std::fwrite("RIFF", 1, 4, f); u32w(36 + bytes); std::fwrite("WAVE", 1, 4, f);
+	std::fwrite("fmt ", 1, 4, f); u32w(16); u16w(3); u16w(2);
+	u32w(rate); u32w(rate * 8); u16w(8); u16w(32);
+	std::fwrite("data", 1, 4, f); u32w(bytes);
+	std::fwrite(pcm.data(), 1, bytes, f);
+	std::fclose(f);
+}
+
 // 16bit PCM の WAV を読む。左右に分けて返す。読めなければ false
 bool read_wav16(const std::string &path, std::vector<s16> &l, std::vector<s16> &r, std::string &err)
 {
@@ -181,10 +200,15 @@ int main(int argc, char **argv)
 	double lcd_at = -1.0;   // --lcd-at 秒: その時刻の液晶の中身を 16 進で出す
 	// --lcd-every 秒: その間隔でずっと出す（画面のちらつきを見るため）
 	double lcd_every = 0.0;
+	// --voices-every 秒: 鳴っている声の数（SWP30 マスタ・スレーブ）をその間隔で出す
+	double voices_every = 0.0, voices_next = 0.0;
+	// --part-rms 番号: --voices-every の行に、そのパート（0-63）の声の和の rms（直近 1024 サンプル）を添える
+	int part_rms = -1;
 	double lcd_next = 0.0;
 	const char *mu_dac_path = nullptr;
 	u32 mu_dac_from = 0, mu_dac_count = 0;
 	const char *meg_path = nullptr;    // MEG の中身を書き出す先
+	bool want_float = false;           // --float: 32bit 浮動小数の WAV で書く（DAC の 18bit を落とさない）
 	const char *meg_trace = nullptr;   // MEG を 1 命令ずつ追う
 	u32 meg_tr_from = 0, meg_tr_count = 0, meg_tr_pc0 = 0, meg_tr_pc1 = 0x180;
 	const char *adc_path = nullptr;    // A/D INPUT に流す WAV
@@ -210,11 +234,17 @@ int main(int argc, char **argv)
 			lcd_at = std::atof(argv[++i]);
 		else if (!std::strcmp(argv[i], "--lcd-every") && i + 1 < argc)
 			lcd_every = std::atof(argv[++i]);
+		else if (!std::strcmp(argv[i], "--voices-every") && i + 1 < argc)
+			voices_every = std::atof(argv[++i]);
+		else if (!std::strcmp(argv[i], "--part-rms") && i + 1 < argc)
+			part_rms = std::atoi(argv[++i]);
 		else if (!std::strcmp(argv[i], "--dump-dac") && i + 3 < argc) {
 			mu_dac_path = argv[++i];
 			mu_dac_from = u32(std::strtoul(argv[++i], nullptr, 0));
 			mu_dac_count = u32(std::strtoul(argv[++i], nullptr, 0));
 		}
+		else if (!std::strcmp(argv[i], "--float"))
+			want_float = true;
 		else if (!std::strcmp(argv[i], "--dump-meg") && i + 1 < argc)
 			meg_path = argv[++i];
 		else if (!std::strcmp(argv[i], "--trace-meg") && i + 5 < argc) {
@@ -352,6 +382,7 @@ int main(int argc, char **argv)
 
 	const u32 rate = 44100;
 	std::vector<s16> pcm;
+	std::vector<float> fpcm;           // --float のとき
 
 	// 起動を待つ。実機も電源投入から数秒は MIDI を受け付けない。
 	// 待たずに流すと曲頭のリセットや音色指定が捨てられ、全パートが
@@ -373,6 +404,10 @@ int main(int argc, char **argv)
 			mu.run_sample(l, r);
 			pcm.push_back(s16(std::clamp(l * 32768 / mu2000::DAC_FULL_SCALE, -32768, 32767)));
 			pcm.push_back(s16(std::clamp(r * 32768 / mu2000::DAC_FULL_SCALE, -32768, 32767)));
+			if (want_float) {
+				fpcm.push_back(float(l) / float(mu2000::DAC_FULL_SCALE));
+				fpcm.push_back(float(r) / float(mu2000::DAC_FULL_SCALE));
+			}
 		}
 		boot = double(i) / rate;
 		if (use_bootcache && i < limit)
@@ -464,6 +499,22 @@ int main(int argc, char **argv)
 					std::printf(" %02x", dd[line * 0x40 + pos]);
 			std::printf("\n");
 		}
+		if (part_rms >= 0 && i == size_t(boot * rate))
+			mu.set_part_scopes(true);
+		if (voices_every > 0.0 && i >= size_t((boot + voices_next) * rate)) {
+			std::printf("VOICES %.3f M %d S %d LED %03x", voices_next,
+			            mu.swpm().sounding_voices(), mu.swps().sounding_voices(), unsigned(mu.leds()));
+			if (part_rms >= 0) {
+				static float buf[mu2000::PSCOPE_N];
+				mu.part_scope_read(part_rms, buf, mu2000::PSCOPE_N);
+				double e = 0;
+				for (float v : buf)
+					e += double(v) * double(v);
+				std::printf(" P%d %.0f", part_rms, std::sqrt(e / double(mu2000::PSCOPE_N)));
+			}
+			std::printf("\n");
+			voices_next += voices_every;
+		}
 		if (lcd_every > 0.0 && i >= size_t((boot + lcd_next) * rate)) {
 			const double now = lcd_next;
 			lcd_next += lcd_every;
@@ -517,11 +568,8 @@ int main(int argc, char **argv)
 			if (ev.size() == 2 && ev[0] == 0xf5)
 				port = std::clamp(int(ev[1]) - 1, 0, mu2000::MIDI_PORTS - 1);
 			else {
-				// ファイルの口 3・4 は gui の既定と同じく A・B に重ねる
-				// USB の口を使うときは C・D まで届くので、ファイルの口をそのまま使う
-				const int to = port >= 0 ? port
-					: usb_host ? std::min<int>(events[next].port, mu2000::MIDI_PORTS - 1)
-					: smf::mu_port(events[next].port, true);
+				// ファイルの口 3・4 は gui と同じく、USB の口なら C・D へ、DIN の口なら A・B に重ねる
+				const int to = port >= 0 ? port : smf::mu_port(events[next].port, true, usb_host);
 				if (trace_midi)
 					trace_event(next, events[next], to);
 				if (const char *reset = reset_name(ev))
@@ -549,6 +597,10 @@ int main(int argc, char **argv)
 		}
 		s32 l = 0, r = 0;
 		mu.run_sample(l, r);
+		if (want_float) {
+			fpcm.push_back(float(l) / float(mu2000::DAC_FULL_SCALE));
+			fpcm.push_back(float(r) / float(mu2000::DAC_FULL_SCALE));
+		}
 		// DAC の全振幅は 1<<17。16bit に落とす（MAME の 1<<17 目盛りと同じ）
 		l = l * 32768 / mu2000::DAC_FULL_SCALE;
 		r = r * 32768 / mu2000::DAC_FULL_SCALE;
@@ -627,7 +679,10 @@ int main(int argc, char **argv)
 			std::printf("カードに書き戻した: %s（%zu ブロック）\n", card_path, blocks.size());
 	}
 
-	write_wav(wav, pcm, rate);
+	if (want_float)
+		write_wav_float(wav, fpcm, rate);
+	else
+		write_wav(wav, pcm, rate);
 	if (eng_opts.native_engine && eng_opts.voicecache)
 		smu2000::voicecache::save(mu, smu2000::voicecache::key(mu));
 	if (eng_opts.native_engine) {
@@ -645,7 +700,7 @@ int main(int argc, char **argv)
 			            100.0 * double(w.by_other) / double(w.total));
 	}
 	if (eng_opts.native_engine) {
-		std::printf("  いちばん多いときのスロット: %d / 64\n", mu.native_peak_slots());
+		std::printf("  いちばん多いときのスロット: %d / 128\n", mu.native_peak_slots());
 		if (const u32 stomp = mu.native_fw_stomp())
 			std::printf("  **firmware がこちらの鳴っているスロットに書いた %u 回**\n", stomp);
 		if (const u32 wrong = mu.native_learn_wrong())

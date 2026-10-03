@@ -18,6 +18,7 @@
 
 #include <atomic>
 #include <cstring>
+#include <deque>
 #include <mutex>
 #include <vector>
 
@@ -66,6 +67,32 @@ public:
 		return m_to_mu_p[port].put(bytes, n);
 	}
 	bool send_b(const u8 *bytes, size_t n) { return send_port(1, bytes, n); }
+
+	// ---- 外の MIDI 出力へ送る（音色の窓の Ctrl＋右クリック）。音源には入れない。
+	// 画面の糸が積み、音声の糸が行き先の出力へ流す（出力の輪に積むのは音声の糸だけ、の決まりを守る）。
+	// dest は 0 = MIDI THRU A の出力、1 = THRU B、2 = 送り先に選んだ別の出力。
+	// 溜まりすぎたら（音声の糸が回っていない、プラグインなど）捨てて false
+	bool send_out(int dest, std::vector<u8> msg)
+	{
+		std::lock_guard<std::mutex> lock(m_out_lock);
+		if (m_out_q.size() >= 256 || msg.empty())
+			return false;
+		m_out_q.emplace_back(dest, std::move(msg));
+		return true;
+	}
+	// 音声の糸から。錠が取れなければ次のブロックで（待たない）
+	template <typename F>
+	void drain_out(F &&f)
+	{
+		std::unique_lock<std::mutex> lock(m_out_lock, std::try_to_lock);
+		if (!lock.owns_lock())
+			return;
+		while (!m_out_q.empty()) {
+			const std::pair<int, std::vector<u8>> e = std::move(m_out_q.front());
+			m_out_q.pop_front();
+			f(e.first, e.second);
+		}
+	}
 
 	// パラメータの層の問い合わせ（ダンプ要求）。send と同じく音源の口 A へ入るが、
 	// **外の MIDI THRU へは流さない**（画面が値を読みに行っているだけで、外の機器には
@@ -214,6 +241,39 @@ public:
 		return -1;
 	}
 
+	// ---- 全パートの音と最終の出力（一覧の小さなスペクトラム）。一覧が描くたびに want_part_scopes を
+	// 呼び、音声の糸は最後に呼ばれてから 0.5 秒のあいだだけ溜めて置く（mu2000::part_scope_read）
+	static constexpr size_t PSCOPE_N = mu2000::PSCOPE_N;
+	static constexpr int PSCOPE_SRCS = 65;                 // 64 パートと最終の出力（64）
+	void want_part_scopes() { m_pscope_want_ms.store(audio_ms() + 1, std::memory_order_relaxed); }
+	bool part_scopes_wanted() const
+	{
+		const u64 t = m_pscope_want_ms.load(std::memory_order_relaxed);
+		return t && audio_ms() + 1 < t + 500;
+	}
+	void publish_part_scopes(const float *all)
+	{
+		m_pscope_seq.fetch_add(1, std::memory_order_release);
+		std::memcpy(m_pscope.data(), all, m_pscope.size() * sizeof(float));
+		m_pscope_seq.fetch_add(1, std::memory_order_release);
+	}
+	// 置いた回数（変わっていなければ読み直さなくてよい）。0 はまだ無い
+	unsigned part_scopes_serial() const { return m_pscope_seq.load(std::memory_order_acquire) / 2; }
+	bool read_part_scope(int src, float *out) const
+	{
+		if (src < 0 || src >= PSCOPE_SRCS)
+			return false;
+		for (int tries = 0; tries < 8; tries++) {
+			const unsigned a = m_pscope_seq.load(std::memory_order_acquire);
+			if (a & 1)
+				continue;
+			std::memcpy(out, m_pscope.data() + size_t(src) * PSCOPE_N, PSCOPE_N * sizeof(float));
+			if (m_pscope_seq.load(std::memory_order_acquire) == a)
+				return a != 0;
+		}
+		return false;
+	}
+
 	void publish(const snapshot &s)
 	{
 		m_seq.fetch_add(1, std::memory_order_release);
@@ -268,6 +328,8 @@ private:
 	ring                  m_ask;          // パラメータの層の問い合わせ → 音源（THRU には流さない）
 	// 画面 → 音源の口 B・C・D（THRU には流さない）。[0] は使わない（口 A は m_to_mu）
 	ring                  m_to_mu_p[mu2000::MIDI_PORTS];
+	std::mutex            m_out_lock;                          // send_out の待ち行列
+	std::deque<std::pair<int, std::vector<u8>>> m_out_q;
 	ring                  m_from_mu;      // 音源の MIDI OUT → 画面
 	std::atomic<u64>      m_audio_ms{0};
 	u64                   m_clock_frac = 0;   // 音声の糸だけが触る
@@ -283,6 +345,9 @@ private:
 	std::atomic<unsigned> m_scope_seq{0};
 	std::vector<float>    m_scope = std::vector<float>(size_t(SCOPE_SRCS) * SCOPE_N);
 	int                   m_scope_part = -1;
+	std::atomic<u64>      m_pscope_want_ms{0};
+	std::atomic<unsigned> m_pscope_seq{0};
+	std::vector<float>    m_pscope = std::vector<float>(size_t(PSCOPE_SRCS) * PSCOPE_N);
 	xg_snapshot           m_xg;
 	std::atomic<bool>     m_want_defaults{false};
 	std::atomic<bool>     m_have_defaults{false};

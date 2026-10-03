@@ -15,6 +15,7 @@
 #include "xg/model.h"
 #include "xg/voices.h"
 
+#include <functional>
 #include <string>
 #include <vector>
 
@@ -103,6 +104,65 @@ void set_shape_window_part(int part);
 void request_master();
 bool take_master_request();             // 頼みがあれば true（1 回だけ）
 
+// ---- ドラムセットアップ（XG の 3n rr pp）。エディタのドラムの面と、音色の窓のドラムのタブが使う
+// 並びはワーク RAM と同じ 23 個（xg::ram::drum_setup_index）
+enum class dshow { signed64, plain, alt, pan, assign, toggle, eq_gain, freq, vel };
+struct drum_param { u8 addr; const char *head; int lo, hi; dshow show; };
+const drum_param *drum_params();                // XG_DRUM_PARAMS 個
+int  drum_index(u8 addr);                       // XG の番地 → 並びの番号（無ければ -1）
+std::string drum_value_text(int idx, int v);
+std::string drum_key_text(int key);             // 「38 D1」（ヤマハの数え方で 60 = C3）
+const char *gm_drum_name(int key);              // GM の打楽器の並びの名前（鍵 35-81。ほかは ""）
+// そのパートの今のキットで、その鍵に割り当てられた楽器名（ROM の表。xg::voice_rom::drum_key_name）。
+// キットでなければ空。音の無い鍵も空
+std::string drum_key_name(xg::model &m, int part, int key);
+// そのパートのキットの名前（バンク 126・127 でなければ空）
+std::string drum_kit_name(xg::model &m, int part);
+int  drum_set_of(const xg_snapshot &ram, int part);   // パートモードが DRUMS1-4 なら 0-3、ほかは -1
+// 今の値。書いたばかりなら、firmware が RAM に入れるまで（長くて 0.5 秒）書いた値を返す
+// （返さないと、つまんで動かしている間に古い値へ跳ね戻る）
+int  drum_value(const xg_snapshot &ram, int set, int key, int idx);
+// 書く（F0 43 10 4C 3n rr pp vv F7）。drag なら drag_send で間引く
+void drum_write(bridge &br, int set, int key, int idx, int value, bool drag = false);
+
+// ---- 音色の窓のドラムのタブ。エディタのドラムの面で行をダブルクリックすると、
+// その組を使っているパートと、その鍵で開く
+int  shape_drum_key();                  // 見ている鍵（13-91）
+void set_shape_drum_key(int key);
+void request_drum(int part, int key);   // 音色の窓をドラムのタブで開く頼み（request_part と同じ道）
+bool take_drum_tab();                   // ドラムのタブを前に出すか（音色の窓が 1 回だけ取る）
+
+// ---- 外の MIDI 出力へ送る（音色の窓の Ctrl＋右クリック）。音源には入れない。
+// シーケンサーに、いま決めた値だけを記録させるため。送り先の品書きは窓の右上
+// 送り先を持っているのは gui.exe だけ（プラグインでは set_out_hooks が呼ばれず、何も出さない）
+struct out_hooks {
+	std::function<std::vector<std::string>()> devices;   // 選べる MIDI 出力
+	std::function<std::string()> chosen;                 // 選んでいる出力の名前（空ならパネルの設定）
+	std::function<std::string()> panel_desc;             // パネルの設定の中身（「A: 機器 / B: 機器」）
+	std::function<void(int)> choose;                     // 選ぶ（-1 でパネルの設定、0 から devices の番号）
+	std::function<int(int port)> dest;                   // 口（0-3）→ bridge::send_out の行き先
+};
+void set_out_hooks(out_hooks h);
+bool out_ready();
+void out_port_combo();                  // 送り先の品書き（と、送った結果のひとこと）
+// 部品がカーソルの下にあるとき、送る中身を名乗る（1 コマごとに out_begin_frame で空に戻る）
+void out_begin_frame();
+void out_hover_param(const xg::param &p, int part);  // パートや共通のパラメータ 1 つ
+void out_hover_drum(int set, int key, int idx);       // ドラムセットアップの 1 項目
+void out_hover_drum_row(int set, int key);            // ドラムセットアップの 1 鍵ぶん（23 項目）
+// XG の番地をじかに（エフェクトのパラメータ）。label は送ったときに出す名前（静的な字）
+void out_hover_raw(u32 addr, int size, const char *label);
+void out_hover_program(int part);                     // 音色（バンクセレクトとプログラムチェンジ）
+// 生の操作子（ホイール）。slot は受信の口 × 16 + ch、bend が偽なら CC1（value 0-127）、
+// 真ならピッチベンド（value は真ん中からの離れ -8192〜8191）
+void out_hover_live(int slot, bool bend, int value);
+void out_hover_group(const std::vector<const char *> &keys, int part);   // 区画ごと（見出しの上。何も名乗っていなければ）
+// Ctrl＋右クリックが来ていれば、名乗られたものを送る。窓の最後に呼ぶ
+void out_end_frame(xg::model &m, const xg_snapshot &ram, bridge &br);
+// 送り先へ 1 通送る（Ctrl＋右クリックと同じ道）。port はチャンネルのメッセージの口（0-3）
+bool out_send(bridge &br, std::vector<u8> msg, int port = 0);
+void out_note(const std::string &text);      // 送り先の品書きの横に出すひとこと
+
 // ---- ファイルの窓（.syx の書き出し・読み込み）。
 // 描画の中からは開けない（窓が回っている間にタイマーが次のコマを描きに来て ImGui に入り直す）。
 // だから頼みだけ置き、窓の持ち主（pc_window）が描き終えてから開いて、読み書きもする。
@@ -180,6 +240,10 @@ void set_master_zoom(float zoom);
 // 今見ているのと違う分類を押すと、その分類の先頭の音色（キットなら先頭のキット）に替える。
 // 音色を替えたら、そのパートで 1 秒だけ音を鳴らして聴かせる
 void program_pane(int part, xg::model &m, const xg_snapshot *ram, bridge &br);
+// 音色の窓のドラムのタブのときの左の面。左の列にキット（ドラムキットと効果音キット）、
+// 右の列にいまのキットの鍵ごとの楽器名。キットを押すとパートの音色を替え、鍵を押すと
+// ドラムのタブの鍵（shape_drum_key）をその鍵にする。どちらも今の鍵を 1 回鳴らす
+void drum_pane(int part, xg::model &m, bridge &br);
 
 // 「ピッチベンド」の組の下に出す、いまのベンドの値。**ワーク RAM ではなく
 // 入ってきた MIDI から**取る（式だけの口では firmware にベンドを渡さないので、
@@ -193,10 +257,14 @@ void bend_now_line(int part, xg::model &m, const xg_snapshot *ram);
 int shown_bank_msb(int part, xg::model &m, int msb);
 // 試聴で鳴らしている音を止める（窓を閉じたとき）
 void audition_stop(bridge &br);
-// 試聴で鳴らす鍵。パートの音色の窓の鍵盤を右クリックして決める（目印が付く）。
-// -1 なら決まっていない（ドラムキットはスネア、ほかは C3 = 60）。editor.ini に覚える
-int  audition_note();
-void set_audition_note(int note);
+// **試聴で鳴らす鍵**。パートの音色の窓の鍵盤を右クリックすると印が付き、
+// もう一度右クリックすると消える。**何鍵でも付けられる**ので、和音で試聴できる。
+// パートごとに別に持つ。**覚えない**ので、開き直すと印は無し
+// ＝ その状態では音色を替えても鳴らない（鳴らすかどうかを自分で決められる）
+bool audition_key(int part, int note);
+void toggle_audition_key(int part, int note);
+// 印の付いた鍵を若い順に集める。戻りは数（out には最大 max 個）
+int  audition_keys(int part, int *out, int max);
 
 // ---- 説明（ヘルプ）。見出しや名前にカーソルを当てると、何に効くのかを出す（日本語・英語）。
 // 邪魔な人もいるので、窓の上のチェックボックスで消せる。選んだ状態は

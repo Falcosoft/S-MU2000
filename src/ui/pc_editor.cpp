@@ -1,6 +1,8 @@
 // license:BSD-3-Clause
 
 #include "pc_editor.h"
+#include "sysex_decode.h"
+#include "eq_curve.h"
 #include "ui/texts.h"
 #include "xg_ui.h"
 
@@ -10,6 +12,8 @@
 #include <algorithm>
 #include <cmath>
 #include <cstdio>
+#include <cstdlib>
+#include <cstring>
 #include <string>
 
 namespace ui {
@@ -363,10 +367,320 @@ void pc_editor::part_page(xg::model &m, bridge &br)
 }
 
 
+// ドラムセットアップの面。上に組（DRUMS1-4）の切り替えと、その組を使っているパート。
+// 表は行が鍵 13-91、列が 1 鍵ぶんの 23 個。値はつまんで上下・ホイールで動かし、
+// 書くのは XG のパラメータチェンジ（F0 43 10 4C 3n rr pp vv F7）
+void pc_editor::drum_page(xg::model &m, const xg_snapshot &ram, bridge &br)
+{
+	const float fs = ImGui::GetFontSize();
+	for (int s = 0; s < XG_DRUM_SETS; s++) {
+		char label[16];
+		std::snprintf(label, sizeof(label), "DRUMS%d", s + 1);
+		if (s)
+			ImGui::SameLine();
+		if (ImGui::RadioButton(label, m_drum_set == s))
+			m_drum_set = s;
+	}
+	// その組を使っているパート（パートモード 08 pp 07 が 2-5）
+	std::string users;
+	int first_user = -1;
+	bool plain = false;
+	for (int p = 0; p < XG_PARTS; p++) {
+		const int mode = ram.parts[p][0x07];
+		if (mode == m_drum_set + 2) {
+			users += (users.empty() ? "" : ", ") + part_name(p);
+			if (first_user < 0)
+				first_user = p;
+		}
+		if (mode == 1)
+			plain = true;
+	}
+	ImGui::SameLine(0, fs * 1.5f);
+	ImGui::Text("%s %s", UI_TEXT(drum_used_by, "Used by:"),
+	            users.empty() ? UI_TEXT(drum_none, "none") : users.c_str());
+	ImGui::SameLine(0, fs * 1.5f);
+	if (ImGui::SmallButton(UI_TEXT(drum_reset, "Reset this setup"))) {
+		const u8 msg[] = { 0xf0, 0x43, 0x10, 0x4c, 0x00, 0x00, 0x7d, u8(m_drum_set), 0xf7 };
+		br.send(msg, sizeof(msg));
+	}
+	// Ctrl＋右クリックで外へ送る先（音色の窓と同じ設定）
+	if (out_ready()) {
+		ImGui::SameLine(0, fs * 1.5f);
+		out_port_combo();
+	}
+	// 楽器名は、その組を使う最初のパートのキットから（ROM の鍵ごとの名前）。使うパートが無ければ GM の並びを目安に
+	const std::string kit = first_user >= 0 ? drum_kit_name(m, first_user) : std::string();
+	if (!kit.empty())
+		ImGui::TextDisabled(UI_TEXT(drum_names_from_fmt, "Instrument names are from %s's kit (%s)"), part_name(first_user).c_str(), kit.c_str());
+	else
+		ImGui::TextDisabled("%s", UI_TEXT(drum_names_hint, "Names follow the GM percussion map as a guide; the actual sound depends on the kit"));
+	if (plain) {
+		ImGui::SameLine(0, fs);
+		ImGui::TextDisabled("/ %s", UI_TEXT(drum_plain_note, "Parts in mode DRUM (no number) ignore every drum setup"));
+	}
+	ImGui::TextDisabled("%s", first_user >= 0 ? UI_TEXT(drum_dblclick_hint, "Double-click a key or name to open it with graphs in the Voices window")
+	                                          : UI_TEXT(drum_no_user_hint, "No part uses this setup, so the Voices window cannot show it (set a part's mode to this DRUMS)"));
+
+	const ImGuiTableFlags flags = ImGuiTableFlags_ScrollY | ImGuiTableFlags_ScrollX | ImGuiTableFlags_RowBg |
+	                              ImGuiTableFlags_BordersInnerV | ImGuiTableFlags_SizingFixedFit;
+	if (!ImGui::BeginTable("drum", 2 + XG_DRUM_PARAMS, flags))
+		return;
+	ImGui::TableSetupScrollFreeze(2, 1);
+	ImGui::TableSetupColumn("Key", ImGuiTableColumnFlags_WidthFixed, fs * 4.2f);
+	ImGui::TableSetupColumn("Name", ImGuiTableColumnFlags_WidthFixed, fs * 9.5f);
+	const drum_param *dp = drum_params();
+	for (int i = 0; i < XG_DRUM_PARAMS; i++)
+		ImGui::TableSetupColumn(dp[i].head, ImGuiTableColumnFlags_WidthFixed, fs * 3.6f);
+	ImGui::TableHeadersRow();
+
+	ImGuiListClipper clip;
+	clip.Begin(XG_DRUM_KEYS);
+	while (clip.Step()) {
+		for (int r = clip.DisplayStart; r < clip.DisplayEnd; r++) {
+			const int key = XG_DRUM_KEY0 + r;
+			ImGui::TableNextRow();
+			ImGui::PushID(r);
+			// 鍵と名前の欄は、行を選ぶ部品にする（ダブルクリックで音色の窓のドラムのタブを開く）
+			ImGui::TableNextColumn();
+			const bool here = first_user >= 0 && shape_window_part() == first_user && shape_drum_key() == key;
+			ImGui::Selectable(drum_key_text(key).c_str(), here);
+			// 鍵と名前の上で Ctrl＋右クリックすると、その鍵の 23 項目をまとめて送る
+			if (ImGui::IsItemHovered())
+				out_hover_drum_row(m_drum_set, key);
+			bool open = ImGui::IsItemHovered() && ImGui::IsMouseDoubleClicked(ImGuiMouseButton_Left);
+			ImGui::TableNextColumn();
+			ImGui::PushStyleColor(ImGuiCol_Text, ImGui::GetColorU32(ImGuiCol_TextDisabled));
+			ImGui::Selectable((kit.empty() ? std::string(gm_drum_name(key)) : drum_key_name(m, first_user, key)).c_str(), here);
+			ImGui::PopStyleColor();
+			if (ImGui::IsItemHovered())
+				out_hover_drum_row(m_drum_set, key);
+			open = open || (ImGui::IsItemHovered() && ImGui::IsMouseDoubleClicked(ImGuiMouseButton_Left));
+			if (open && first_user >= 0)
+				request_drum(first_user, key);
+			for (int i = 0; i < XG_DRUM_PARAMS; i++) {
+				const drum_param &d = dp[i];
+				ImGui::TableNextColumn();
+				const int v = drum_value(ram, m_drum_set, key, i);
+				int nv = v;
+				ImGui::PushID(i);
+				ImGui::SetNextItemWidth(-FLT_MIN);
+				if (d.show == dshow::assign || d.show == dshow::toggle) {
+					bool on = v != 0;
+					if (ImGui::Checkbox(drum_value_text(i, v).c_str(), &on))
+						nv = on ? 1 : 0;
+				} else {
+					// 数の代わりに書式を渡す（% を含まないので、そのまま出る）
+					const std::string text = drum_value_text(i, v);
+					ImGui::DragInt("##v", &nv, 0.25f, d.lo, d.hi, text.c_str(), ImGuiSliderFlags_AlwaysClamp);
+					if (ImGui::IsItemHovered() && ImGui::GetIO().MouseWheel != 0.0f) {
+						nv = std::clamp(nv + (ImGui::GetIO().MouseWheel > 0 ? 1 : -1), d.lo, d.hi);
+						m_wheel_taken = true;
+					}
+				}
+				if (ImGui::IsItemHovered())
+					out_hover_drum(m_drum_set, key, i);      // Ctrl＋右クリックでこの項目だけ送る
+				ImGui::PopID();
+				if (nv != v)
+					drum_write(br, m_drum_set, key, i, nv);
+			}
+			ImGui::PopID();
+		}
+	}
+	ImGui::EndTable();
+}
+
+
+void pc_editor::decode_page(xg::model &m, bridge &br)
+{
+	const float fs = ImGui::GetFontSize();
+	const ImGuiStyle &st = ImGui::GetStyle();
+	ImGui::TextDisabled("%s", UI_TEXT(sxd_hint, "Paste MIDI one message per line (\"F0 43 10 4C ...\", \"f0h 43h ...\", Domino's Ex: lines). The meaning of each line shows on its right; drag its values (part, value, channel...) to rewrite the line. Effect parameters are read with the effect types set now"));
+
+	// 行に分ける
+	std::vector<std::string> lines(1);
+	for (const char *p = m_sx_text; *p; p++) {
+		if (*p == '\n')
+			lines.emplace_back();
+		else if (*p != '\r')
+			lines.back() += *p;
+	}
+	auto store = [&]() {
+		std::string all;
+		for (size_t i = 0; i < lines.size(); i++)
+			all += (i ? "\n" : "") + lines[i];
+		const size_t n = std::min(all.size(), sizeof(m_sx_text) - 1);
+		std::memcpy(m_sx_text, all.data(), n);
+		m_sx_text[n] = 0;
+	};
+	// 送る。out が真なら送り先（Ctrl＋右クリックと同じ）、偽なら音源へ
+	auto send_line = [&](const std::string &line, bool out) {
+		int sent = 0;
+		for (std::vector<u8> &msg : sxd::split(sxd::bytes_of(line))) {
+			if (msg.empty() || (msg[0] < 0x80))
+				continue;
+			if (out ? out_send(br, msg, 0) : br.send(msg))
+				sent++;
+		}
+		return sent;
+	};
+
+	// 送るボタンは色で分ける。送り先（外）は橙、音源は緑
+	auto push_color = [](bool out) {
+		const ImVec4 base = out ? ImVec4(0.72f, 0.40f, 0.12f, 1.0f) : ImVec4(0.16f, 0.50f, 0.36f, 1.0f);
+		ImGui::PushStyleColor(ImGuiCol_Button, base);
+		ImGui::PushStyleColor(ImGuiCol_ButtonHovered, ImVec4(base.x * 1.25f, base.y * 1.25f, base.z * 1.25f, 1.0f));
+		ImGui::PushStyleColor(ImGuiCol_ButtonActive, ImVec4(base.x * 1.45f, base.y * 1.45f, base.z * 1.45f, 1.0f));
+	};
+
+	if (ImGui::SmallButton(UI_TEXT(sxd_clear, "Clear")))
+		m_sx_text[0] = 0;
+	ImGui::SameLine();
+	ImGui::BeginDisabled(!out_ready());
+	push_color(true);
+	const bool all_out = ImGui::SmallButton(UI_TEXT(sxd_send_all_out, "Send all to the port"));
+	ImGui::PopStyleColor(3);
+	if (all_out) {
+		int n = 0;
+		for (const std::string &l : lines)
+			n += send_line(l, true);
+		char note[64];
+		std::snprintf(note, sizeof(note), UI_TEXT(sxd_sent_fmt, "Sent %d"), n);
+		out_note(note);
+	}
+	ImGui::EndDisabled();
+	ImGui::SameLine();
+	push_color(false);
+	const bool all_in = ImGui::SmallButton(UI_TEXT(sxd_send_all_in, "Play all into the sound engine"));
+	ImGui::PopStyleColor(3);
+	if (all_in) {
+		int n = 0;
+		for (const std::string &l : lines)
+			n += send_line(l, false);
+		char note[64];
+		std::snprintf(note, sizeof(note), UI_TEXT(sxd_sent_fmt, "Sent %d"), n);
+		out_note(note);
+	}
+	if (out_ready()) {
+		ImGui::SameLine(0, fs * 1.5f);
+		out_port_combo();
+	}
+
+	const float line_h = ImGui::GetTextLineHeight();
+	// 欄は行の数ぶんの高さにして、中では送らない（右の意味と行をそろえるため）。送るのは外の枠
+	if (ImGui::BeginChild("sxd", ImVec2(0, 0), ImGuiChildFlags_None, ImGuiWindowFlags_HorizontalScrollbar)) {
+		const ImVec2 avail = ImGui::GetContentRegionAvail();
+		const float box_w = std::min(fs * 30.0f, avail.x * 0.42f);
+		const float box_h = std::max(avail.y, float(lines.size() + 2) * line_h + st.FramePadding.y * 2.0f);
+		const ImVec2 top = ImGui::GetCursorScreenPos();
+		ImGui::InputTextMultiline("##sx", m_sx_text, sizeof(m_sx_text), ImVec2(box_w, box_h));
+		const bool typing = ImGui::IsItemActive();
+		const float x = top.x + box_w + fs * 0.6f;
+		const float y0 = top.y + st.FramePadding.y;
+		// 右の部品は字の行と同じ高さに（上下の余白を無くす）
+		ImGui::PushStyleVar(ImGuiStyleVar_FramePadding, ImVec2(fs * 0.25f, 0.0f));
+		ImGui::PushStyleVar(ImGuiStyleVar_ItemSpacing, ImVec2(fs * 0.35f, 0.0f));
+		bool dirty = false;
+		for (size_t i = 0; i < lines.size(); i++) {
+			std::vector<std::vector<u8>> msgs = sxd::split(sxd::bytes_of(lines[i]));
+			if (msgs.empty())
+				continue;
+			ImGui::PushID(int(i));
+			ImGui::SetCursorScreenPos(ImVec2(x, y0 + float(i) * line_h));
+			// この行を送る（送り先へ）・音源へ入れる
+			ImGui::BeginDisabled(!out_ready());
+			push_color(true);
+			const bool line_out = ImGui::SmallButton(UI_TEXT(sxd_send_out, "Out"));
+			ImGui::PopStyleColor(3);
+			if (line_out)
+				out_note(std::string(UI_TEXT(sxd_sent_line, "Sent line ")) + std::to_string(i + 1) + " (" + std::to_string(send_line(lines[i], true)) + ")");
+			ImGui::EndDisabled();
+			if (ImGui::IsItemHovered(ImGuiHoveredFlags_AllowWhenDisabled))
+				ImGui::SetTooltip("%s", UI_TEXT(sxd_send_out_tip, "Send this line to the send-to port"));
+			ImGui::SameLine();
+			push_color(false);
+			const bool line_in = ImGui::SmallButton(UI_TEXT(sxd_send_in, "In"));
+			ImGui::PopStyleColor(3);
+			if (line_in)
+				out_note(std::string(UI_TEXT(sxd_played_line, "Played line ")) + std::to_string(i + 1) + " (" + std::to_string(send_line(lines[i], false)) + ")");
+			if (ImGui::IsItemHovered())
+				ImGui::SetTooltip("%s", UI_TEXT(sxd_send_in_tip, "Play this line into the sound engine"));
+			bool changed = false;
+			for (size_t k = 0; k < msgs.size(); k++) {
+				ImGui::PushID(int(k));
+				if (k) {
+					ImGui::SameLine();
+					ImGui::TextDisabled("|");
+				}
+				const std::vector<sxd::field> fields = sxd::fields_of(msgs[k], m);
+				for (size_t j = 0; j < fields.size(); j++) {
+					const sxd::field &f = fields[j];
+					ImGui::PushID(int(j));
+					ImGui::SameLine();
+					if (f.kind == sxd::fk::text) {
+						if (f.bad)
+							ImGui::TextColored(ImVec4(1.0f, 0.67f, 0.35f, 1.0f), "%s", f.text.c_str());
+						else
+							ImGui::TextUnformatted(f.text.c_str());
+						ImGui::PopID();
+						continue;
+					}
+					if (!f.text.empty()) {
+						ImGui::TextDisabled("%s", f.text.c_str());
+						ImGui::SameLine(0, fs * 0.2f);
+					}
+					std::string shown;
+					float w = fs * 3.0f;
+					switch (f.kind) {
+					case sxd::fk::part: shown = part_name(f.value); w = fs * 2.6f; break;
+					case sxd::fk::dkey: shown = drum_key_text(f.value); w = fs * 4.0f; break;
+					case sxd::fk::dset:
+					case sxd::fk::ch:   shown = std::to_string(f.value + 1); w = fs * 1.8f; break;
+					case sxd::fk::bend: shown = (f.value >= 0 ? "+" : "") + std::to_string(f.value); w = fs * 3.5f; break;
+					default:
+						shown = sxd::value_text(f);
+						w = std::max(fs * 3.0f, std::min(fs * 9.0f, ImGui::CalcTextSize(shown.c_str()).x + fs * 0.8f));
+						break;
+					}
+					// 書式の % は DragInt の書式として読まれないよう重ねる
+					std::string fmt;
+					for (char c : shown) {
+						if (c == '%')
+							fmt += '%';
+						fmt += c;
+					}
+					int v = f.value;
+					ImGui::SetNextItemWidth(w);
+					const float speed = f.hi - f.lo > 1000 ? 16.0f : 0.25f;
+					ImGui::DragInt("##f", &v, speed, f.lo, f.hi, fmt.c_str(), ImGuiSliderFlags_AlwaysClamp);
+					if (ImGui::IsItemHovered() && ImGui::GetIO().MouseWheel != 0.0f)
+						v = std::clamp(v + (ImGui::GetIO().MouseWheel > 0 ? 1 : -1), f.lo, f.hi);
+					if (v != f.value && !typing) {
+						sxd::apply(msgs[k], f, v);
+						changed = true;
+					}
+					ImGui::PopID();
+				}
+				ImGui::PopID();
+			}
+			if (changed) {
+				lines[i] = sxd::write_line(msgs, sxd::style_of(lines[i]));
+				dirty = true;
+			}
+			ImGui::PopID();
+		}
+		ImGui::PopStyleVar(2);
+		if (dirty)
+			store();
+	}
+	ImGui::EndChild();
+}
+
+
 void pc_editor::draw(xg::model &m, const xg_snapshot &ram, bridge &br)
 {
 	m_ram = &ram;
 	m_wheel_taken = false;
+	out_begin_frame();                // Ctrl＋右クリックで送るもの（ドラムの面）
 
 	const ImGuiViewport *vp = ImGui::GetMainViewport();
 	ImGui::SetNextWindowPos(vp->WorkPos);
@@ -412,10 +726,52 @@ void pc_editor::draw(xg::model &m, const xg_snapshot &ram, bridge &br)
 			part_page(m, br);
 			ImGui::EndTabItem();
 		}
+		// 確かめ用: SMU2000_EDITOR_TAB=drum で最初からドラムの面を開く（画面を撮るため）。
+		// drum:鍵 なら、その行をダブルクリックしたのと同じく音色の窓のドラムのタブも開く
+		// （窓に送ったクリックは ImGui が本物のカーソルの位置で上書きするので、試しでは押せない）
+		static int open_drum = [] {
+			const char *e = std::getenv("SMU2000_EDITOR_TAB");
+			if (!e || std::strncmp(e, "drum", 4))
+				return -1;
+			return e[4] == ':' ? std::atoi(e + 5) : 0;
+		}();
+		const ImGuiTabItemFlags drum_flags = open_drum >= 0 ? ImGuiTabItemFlags_SetSelected : 0;
+		if (ImGui::BeginTabItem(UI_TEXT(ed_tab_drum, "Drum"), nullptr, drum_flags)) {
+			drum_page(m, ram, br);
+			ImGui::EndTabItem();
+		}
+		// 確かめ用: SMU2000_EDITOR_TAB=sysex で最初から開き、SMU2000_SYSEX_FILE の中身を入れておく
+		static bool open_sx = [] {
+			const char *e = std::getenv("SMU2000_EDITOR_TAB");
+			return e && !std::strcmp(e, "sysex");
+		}();
+		if (open_sx) {
+			if (const char *f = std::getenv("SMU2000_SYSEX_FILE"))
+				if (FILE *fp = std::fopen(f, "rb")) {
+					const size_t n = std::fread(m_sx_text, 1, sizeof(m_sx_text) - 1, fp);
+					m_sx_text[n] = 0;
+					std::fclose(fp);
+				}
+		}
+		const ImGuiTabItemFlags sx_flags = open_sx ? ImGuiTabItemFlags_SetSelected : 0;
+		open_sx = false;
+		if (ImGui::BeginTabItem(UI_TEXT(ed_tab_sysex, "SysEx"), nullptr, sx_flags)) {
+			decode_page(m, br);
+			ImGui::EndTabItem();
+		}
+		if (open_drum > 0) {
+			for (int p = 0; p < XG_PARTS; p++)
+				if (drum_set_of(ram, p) == m_drum_set) {
+					request_drum(p, open_drum);
+					break;
+				}
+		}
+		open_drum = -1;
 		ImGui::EndTabBar();
 	}
 	ImGui::EndChild();
 
+	out_end_frame(m, ram, br);
 	ImGui::End();
 
 	// つまみが取らなかったホイールはスクロール。しばらくつまみに取らせない

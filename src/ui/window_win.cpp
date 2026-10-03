@@ -10,11 +10,19 @@
 #include "ui/keymap_win.h"
 #include "ui/pc_host.h"
 
+#include "ui/imgui_shell.h"
+
+#include "imgui.h"
+#include "backends/imgui_impl_win32.h"
+
+#include <cstdio>
 #include <windowsx.h>
 #include <shellapi.h>
 
 #include <algorithm>
 #include <cmath>
+
+extern IMGUI_IMPL_API LRESULT ImGui_ImplWin32_WndProcHandler(HWND hWnd, UINT msg, WPARAM wParam, LPARAM lParam);
 
 namespace ui {
 
@@ -26,21 +34,40 @@ double lcd_aspect()
 	return h > 0.0 ? g_win->panel.lay().lcd[2] / h : 1.0;
 }
 
-// Keep the client area, excluding the title bar and resize frame, at the LCD ratio.
-void constrain_lcd_sizing(HWND hwnd, WPARAM edge, RECT &r)
+// What the window keeps at a fixed ratio: the LCD alone, or the whole panel
+// picture (1000:400, the same ratio the VST3 view keeps). The toolbar strip
+// on top is added, not scaled, so it stays out of the ratio
+double body_aspect()
+{
+	return g_win->lcd_only ? lcd_aspect() : double(LOGICAL_W) / LOGICAL_H;
+}
+
+// Client height for a client width, strip included
+int client_h_for(int client_w)
+{
+	return int(std::lround(client_w / body_aspect())) + g_win->panel.top_inset();
+}
+
+// Keep the client area, excluding the title bar and resize frame, at the
+// body ratio. Without it the panel letterboxes, and a short, wide window
+// shrinks the LCD dots to fit the height, leaving gaps at the LCD's sides
+void constrain_sizing(HWND hwnd, WPARAM edge, RECT &r)
 {
 	RECT wr{}, cr{};
 	GetWindowRect(hwnd, &wr);
 	GetClientRect(hwnd, &cr);
 	const int frame_w = (wr.right - wr.left) - (cr.right - cr.left);
 	const int frame_h = (wr.bottom - wr.top) - (cr.bottom - cr.top);
+	const int inset = g_win->panel.top_inset();
+	const int min_w = g_win->lcd_only ? 200 : 500;
 	int outer_w = r.right - r.left;
 	int outer_h = r.bottom - r.top;
 
 	if (edge == WMSZ_TOP || edge == WMSZ_BOTTOM) {
-		const int client_h = std::max(60, outer_h - frame_h);
-		outer_h = client_h + frame_h;
-		outer_w = int(std::lround(client_h * lcd_aspect())) + frame_w;
+		const int body_h = std::max(int(std::lround(min_w / body_aspect())),
+		                            outer_h - frame_h - inset);
+		outer_h = body_h + inset + frame_h;
+		outer_w = int(std::lround(body_h * body_aspect())) + frame_w;
 		if (edge == WMSZ_TOP)
 			r.top = r.bottom - outer_h;
 		else
@@ -49,9 +76,9 @@ void constrain_lcd_sizing(HWND hwnd, WPARAM edge, RECT &r)
 		return;
 	}
 
-	const int client_w = std::max(200, outer_w - frame_w);
+	const int client_w = std::max(min_w, outer_w - frame_w);
 	outer_w = client_w + frame_w;
-	outer_h = int(std::lround(client_w / lcd_aspect())) + frame_h;
+	outer_h = client_h_for(client_w) + frame_h;
 	if (edge == WMSZ_LEFT || edge == WMSZ_TOPLEFT || edge == WMSZ_BOTTOMLEFT)
 		r.left = r.right - outer_w;
 	else
@@ -60,6 +87,17 @@ void constrain_lcd_sizing(HWND hwnd, WPARAM edge, RECT &r)
 		r.top = r.bottom - outer_h;
 	else
 		r.bottom = r.top + outer_h;
+}
+
+imshell::dx11_state g_im{};
+
+void win_imgui_frame(HWND hwnd)
+{
+	RECT cr;
+	GetClientRect(hwnd, &cr);
+	imshell::dx11_paint(g_im, cr.right, cr.bottom, [&](ImDrawList *dl) {
+		g_win->paint_main(dl, g_im.fonts, cr.right);
+	});
 }
 
 } // namespace
@@ -86,8 +124,9 @@ bool make_window(const char *title, int w, int h)
 
 	const DWORD style = g_win->lcd_only ? (WS_OVERLAPPEDWINDOW & ~WS_MAXIMIZEBOX)
 	                                      : WS_OVERLAPPEDWINDOW;
-	if (g_win->lcd_only)
-		h = std::max(60, int(std::lround(w / lcd_aspect())));
+	// The first size follows the same ratio as dragging does; --size's
+	// width wins, the height is worked out from it
+	h = std::max(60, client_h_for(w));
 	RECT want{ 0, 0, w, h };
 	AdjustWindowRect(&want, style, FALSE);
 	HWND hwnd = CreateWindowA("SMU2000Panel", title, style,
@@ -111,32 +150,30 @@ void track_menu_at(HWND hwnd, int mx, int my)
 	win_track_menu(hwnd, pt, g_win->context_menu(mx, my));
 }
 
-void ensure_backing(HDC dc, int w, int h)
-{
-	if (g_win->mem_dc && g_win->mem_w == w && g_win->mem_h == h)
-		return;
-	if (g_win->mem_bmp) DeleteObject(g_win->mem_bmp);
-	if (g_win->mem_dc)  DeleteDC(g_win->mem_dc);
-	g_win->mem_dc = CreateCompatibleDC(dc);
-	g_win->mem_bmp = CreateCompatibleBitmap(dc, w, h);
-	SelectObject(g_win->mem_dc, g_win->mem_bmp);
-	g_win->mem_w = w;
-	g_win->mem_h = h;
-}
-
 LRESULT CALLBACK wnd_proc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp)
 {
+	if (g_im.imgui) {
+		ImGui::SetCurrentContext(g_im.imgui);
+		// Editor windows skip WM_CHAR outside text boxes (pc_window.cpp);
+		// the panel takes keys directly, so every key stays shared.
+		ImGui_ImplWin32_WndProcHandler(hwnd, msg, wp, lp);
+	}
 	switch (msg) {
 	case WM_CREATE:
 		g_win->hwnd = hwnd;
 		SetTimer(hwnd, 1, 33, nullptr);        // 30 コマ／秒で描き直す
+		if (!imshell::dx11_start(g_im, hwnd)) {
+			MessageBoxA(hwnd, "Cannot use Direct3D 11", "S-MU2000",
+			            MB_OK | MB_ICONERROR);
+			return -1;
+		}
+		// The context is up and no frame is open, so the panel can build its
+		// fonts now (see panel::fonts_ready)
+		g_win->panel.fonts_ready();
 		return 0;
 
 	case WM_TIMER: {
-		// The timer half is shared (ui::app::frame_work); painting waits
-		// for the invalidate, like every other platform work item here
-		g_win->frame_work();
-		InvalidateRect(hwnd, nullptr, FALSE);
+		win_imgui_frame(hwnd);   // timer work runs inside paint_main
 		return 0;
 	}
 
@@ -159,32 +196,21 @@ LRESULT CALLBACK wnd_proc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp)
 
 
 	case WM_SIZE:
+		g_im.resize_w = LOWORD(lp);
+		g_im.resize_h = HIWORD(lp);
 		g_win->resized(LOWORD(lp), HIWORD(lp));
-		InvalidateRect(hwnd, nullptr, FALSE);
 		return 0;
 
 	case WM_SIZING:
-		if (g_win->lcd_only) {
-			constrain_lcd_sizing(hwnd, wp, *reinterpret_cast<RECT *>(lp));
-			return TRUE;
-		}
-		break;
+		constrain_sizing(hwnd, wp, *reinterpret_cast<RECT *>(lp));
+		return TRUE;
 
 	case WM_ERASEBKGND:
 		return 1;                               // 全部自分で描く
 
 	case WM_PAINT: {
-		PAINTSTRUCT ps;
-		HDC dc = BeginPaint(hwnd, &ps);
-		RECT cr;
-		GetClientRect(hwnd, &cr);
-		const int w = cr.right, h = cr.bottom;
-		ensure_backing(dc, w, h);
-
-		// The wait/drop fragment is what WASAPI measures (ui/status.h)
-		g_win->paint_frame(g_win->mem_dc, w);
-
-		BitBlt(dc, 0, 0, w, h, g_win->mem_dc, 0, 0, SRCCOPY);
+		PAINTSTRUCT ps;   // Direct3D が出す。validate のためだけに閉じる
+		BeginPaint(hwnd, &ps);
 		EndPaint(hwnd, &ps);
 		return 0;
 	}
@@ -273,6 +299,7 @@ LRESULT CALLBACK wnd_proc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp)
 		return 0;
 
 	case WM_DESTROY:
+		imshell::dx11_stop(g_im);
 		PostQuitMessage(0);
 		return 0;
 	}

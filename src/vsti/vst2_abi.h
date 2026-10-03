@@ -119,6 +119,7 @@ constexpr vint32 plugin_id = fourcc('S', 'M', 'U', '2');
 constexpr vint32 midi_event_byte_size = 24;
 // Some VST2 hosts use the same convention for SysEx: byte_size excludes
 // the leading type and byte_size fields. Thus it is sizeof(sysex_event) - 8.
+// Others report the whole structure, so both have to be accepted (PR #53)
 constexpr vint32 sysex_event_byte_size = vint32(sizeof(sysex_event) - 8);
 
 enum effect_flags : vint32 {

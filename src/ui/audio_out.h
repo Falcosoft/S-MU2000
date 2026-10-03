@@ -80,8 +80,10 @@ public:
 	// raw has no meaning here -- on this side the system does the format
 	// conversion rather than a driver mixer, so there is nothing to bypass. It is
 	// in the signature only so both platforms take the same call
+	// exact is for menu selections: a disconnected name must not select a
+	// different device merely because its name contains the old one.
 	bool start(int latency_ms, fill_fn fill, std::string &err, bool exclusive = false,
-	           const std::string &device = std::string(), bool raw = false);
+	           const std::string &device = std::string(), bool raw = false, bool exact = false);
 
 	// The port that was actually opened, by name
 	std::string device_name() const;
@@ -146,8 +148,9 @@ public:
 	// exclusive なら Windows の混ぜ合わせを通さない（他のアプリは鳴らせない）。
 	// device は名前の一部（空なら Windows の既定）。**既定は勝手に変わる**ので、
 	// 聞いている口が決まっているなら指定したほうがよい
+	// exact disables the CLI's substring matching for a menu selection.
 	bool start(int latency_ms, fill_fn fill, std::string &err, bool exclusive = false,
-	           const std::string &device = std::string(), bool raw = false);
+	           const std::string &device = std::string(), bool raw = false, bool exact = false);
 
 	// 実際に開いた口の名前
 	std::string device_name() const { return m_dev_name; }
@@ -232,6 +235,7 @@ private:
 	std::string       m_cap_path;
 	std::string       m_dev_name, m_want_dev;
 	bool              m_want_raw = false;
+	bool              m_exact_dev = false; // UI selections cannot fall back to substring matches
 	std::atomic<bool> m_raw{false};
 	s64 m_qpc_freq = 1;
 };

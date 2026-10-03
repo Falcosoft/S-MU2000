@@ -133,7 +133,10 @@ public:
 	// （フィルタの第 2 係数が +20 にある。旋律は +80。doc の 6.85）
 	u32 drum_record(int kit, int note) const
 	{
-		// **bit7 が立っているときは別の道**（0x134DF0。SFX など）。まだ真似していない
+		// **bit7 が立っているときは別の道**（0x134DF0）。あちらは**ドラム
+		// セットアップ**の引き方で（4 組 × 79 鍵、DRAM の 0x01051A28 から
+		// 42 バイトずつ）、1 打の記録ではない。SFX キットはこの道を
+		// キット番号 47・48 で通る（doc/native-engine.md の 6.234）
 		if (!m_ok || (kit & 0x80))
 			return 0;
 		const u32 base = rd32(DRUM_KIT_TABLE + u32(kit & 0x7f) * 4);
@@ -161,6 +164,28 @@ public:
 		const u8 idx = byte(map + (prog & 0x7f));
 		const std::string s = trim(std::string(reinterpret_cast<const char *>(at(names + idx * 12)), 8));
 		return s == "SilenKit" ? std::string() : s;
+	}
+
+	// **ドラムの鍵ごとの楽器名**（12 文字。LCD のドラムセットアップの画面に出る名前）。
+	// キットの記録（名前 8 文字の後ろの 4 バイト）が、鍵 13-91 の名前の表（12 文字 × 79）を指している。
+	// バンク 127 の 32 キットとバンク 126（SFX）の 9 キットすべてで引ける。音の無い鍵は
+	// 「************」なので空を返す。キットでない（msb が 126・127 でない）ときも空
+	std::string drum_key_name(int msb, int prog, int key) const
+	{
+		if (!m_ok || (msb != 127 && msb != 126) || key < DRUM_KEY0 || key >= DRUM_KEY0 + DRUM_KEYS)
+			return {};
+		const u32 map = msb == 127 ? KIT_MAP : SFX_MAP;
+		const u32 names = msb == 127 ? KIT_NAMES : SFX_NAMES;
+		const u32 table = rd32(names + u32(byte(map + u32(prog & 0x7f))) * 12 + 8);
+		if (table < 0x200000 || table + DRUM_KEYS * 12 > m_rom->size())
+			return {};
+		std::string s(reinterpret_cast<const char *>(at(table + u32(key - DRUM_KEY0) * 12)), 12);
+		for (char c : s)
+			if (c < 0x20 || c > 0x7e)
+				return {};
+		if (s == "************")
+			return {};
+		return trim(s);
 	}
 
 	// 楽器の絵。16 行、各行 16 ビット（上の桁が左）。無ければ false
@@ -247,6 +272,7 @@ private:
 	static constexpr u32 KIT_NAMES       = 0x299dc0;   //   名前 8 文字 + 4 バイト
 	static constexpr u32 SFX_MAP         = 0x29be58;   // バンク 126
 	static constexpr u32 SFX_NAMES       = 0x29bdec;
+	static constexpr int DRUM_KEY0 = 13, DRUM_KEYS = 79;   // 鍵ごとの名前の表の範囲
 	static constexpr u32 ICON_OF_PROGRAM = 0x1cd044;   // プログラム → 絵の番号
 	static constexpr u32 ICONS           = 0x1bbf70;   // 絵。16 ワードずつ
 	// ドラムキットの絵。プログラム → 絵の番号の表のすぐ後ろに、起動のときの動く絵のコマが並んでいて、

@@ -13,6 +13,7 @@
 
 #include "compat/paths.h"
 #include "compat/platform.h"
+#include "roms_dir.h"
 
 #include <algorithm>
 #include <chrono>
@@ -40,12 +41,12 @@ namespace {
 // The OS answers now come from compat/paths.h: where this image lives, what
 // the environment says, and where the per-user settings directory is. Only the
 // search order below is this file's business.
-
-// そのディレクトリが ROM 置き場かどうか
-bool has_roms(const std::string &dir)
-{
-	return !dir.empty() && smu2000::is_file(smu2000::join(dir, "mu2000_flash.bin"));
-}
+//
+// What counts as a ROM directory comes from roms_dir.h, which the AUv3's
+// container app also uses to put a set in place. It asks for the whole set
+// (the program ROM and the four wave ROMs), not just a program ROM: a
+// half-copied directory must not shadow a complete one, since the search stops
+// at the first hit and a partial one cannot play anything.
 
 // roms.txt に書かれた場所を読む（1 行目だけ）
 std::string read_pointer_file(const std::string &path)
@@ -106,31 +107,9 @@ std::string find_roms(std::string &tried)
 	if (!ev.empty())
 		cand.push_back(ev);
 
-	// The address of a function in this image is what locates the image:
-	// a module handle on Windows, the Mach-O header on macOS
-	const std::string dir = smu2000::module_dir(reinterpret_cast<const void *>(&logf));
-	if (!dir.empty()) {
-		// 2. バンドルの Resources。
-		//    <名前>.vst3/Contents/x86_64-win/ に DLL がいるので 1 つ上
-		//    (macOS puts the binary in Contents/MacOS, also one level up)
-		cand.push_back(smu2000::join(dir, "../Resources"));
-		cand.push_back(smu2000::join(dir, "../Resources/roms"));
-		// 3. DLL のすぐ横
-		cand.push_back(smu2000::join(dir, "roms"));
-		cand.push_back(dir);
-		// 4. 場所を書いた紙
-		const std::string notes[2] = { smu2000::join(dir, "../Resources/roms.txt"),
-		                               smu2000::join(dir, "roms.txt") };
-		for (const std::string &p : notes) {
-			const std::string s = read_pointer_file(p);
-			if (!s.empty())
-				cand.push_back(s);
-		}
-	}
-
-	// 5. The fixed places, following where macOS puts an application's own data
-	//    (Application Support, Documents). Per-user comes first and machine-wide
-	//    last, so a user's own copy wins
+	// 2. The user's own files, before the bundle's. A copy the user put there
+	//    is the one they chose, while a bundle copy only exists because a
+	//    build baked it in -- so theirs wins when both are present.
 	const std::string local = smu2000::config_dir();
 	if (!local.empty()) {
 		// A note naming the directory. Someone using this from a DAW has nowhere
@@ -145,7 +124,30 @@ std::string find_roms(std::string &tried)
 	if (!home.empty())
 		cand.push_back(smu2000::join(home, "Documents/S-MU2000/roms"));
 
-	// 6. The machine-wide places. **Put the ROMs here once and every user of the
+	// 3. Next to the binary, which is where a checkout works from rather than
+	//    an install. The address of a function in this image is what locates
+	//    the image: a module handle on Windows, the Mach-O header on macOS
+	const std::string dir = smu2000::module_dir(reinterpret_cast<const void *>(&logf));
+	if (!dir.empty()) {
+		// 3a. バンドルの Resources。
+		//     <名前>.vst3/Contents/x86_64-win/ に DLL がいるので 1 つ上
+		//     (macOS puts the binary in Contents/MacOS, also one level up)
+		cand.push_back(smu2000::join(dir, "../Resources"));
+		cand.push_back(smu2000::join(dir, "../Resources/roms"));
+		// 3b. DLL のすぐ横
+		cand.push_back(smu2000::join(dir, "roms"));
+		cand.push_back(dir);
+		// 4. 場所を書いた紙
+		const std::string notes[2] = { smu2000::join(dir, "../Resources/roms.txt"),
+		                               smu2000::join(dir, "roms.txt") };
+		for (const std::string &p : notes) {
+			const std::string s = read_pointer_file(p);
+			if (!s.empty())
+				cand.push_back(s);
+		}
+	}
+
+	// 5. The machine-wide places. **Put the ROMs here once and every user of the
 	//    machine, and every instance of either plug-in, finds them.** The AU is
 	//    one bundle in Components, shared by all accounts, so this is its
 	//    intended home (/Library/Application Support, %ProgramData% on Windows)
@@ -161,10 +163,13 @@ std::string find_roms(std::string &tried)
 	}
 
 	for (const std::string &c : cand) {
-		const std::string p = smu2000::full_path(c);
-		if (has_roms(p))
-			return p;
-		tried += "  " + p + "\n";
+		// One conversion, here: the candidate list is still strings (it comes
+		// from compat/paths.h, which speaks strings), and everything past this
+		// point is a path. has_roms takes the path, never the string.
+		const smu2000::fs::path p = smu2000::fs::path(smu2000::full_path(c));
+		if (smu2000::has_roms(p))
+			return p.string();
+		tried += "  " + p.string() + "\n";
 	}
 	return {};
 }
@@ -549,6 +554,12 @@ void engine::midi(const uint8_t *bytes, size_t n, int port)
 	if (s == status::ready) {
 		std::unique_lock<std::mutex> lock(m_machine, std::try_to_lock);
 		if (lock.owns_lock()) {
+			// **預かっている状態があれば、MIDI より先に戻す**（issue #51）。
+			// VST2 の setChunk は起動を待たないので、起動中に戻された状態は
+			// 最初の fill() の頭で戻していた。ところが起動が済んでから届いた MIDI は
+			// fill() より先にここで流れるので、曲頭のリセットと音色の指定のあとに
+			// 状態が丸ごと戻り、音色が消えていた（冷えた起動のときだけ）
+			apply_deferred_state();
 			// 溜まっていた分を先に流して、順番を保つ
 			for (uint8_t b : m_pending[port])
 				m_drv.watch(b, m_mu->midi_in(b, port));
@@ -758,11 +769,34 @@ void engine::apply_deferred_state()
 	m_deferred_setup.shrink_to_fit();
 }
 
+// **状態を戻したら、鳴っていた声を止める**（issue #51）。曲を鳴らしている途中で
+// ホストを閉じると、鳴っている声ごと状態が保存され、次に開いたときにその音が
+// 鳴りっぱなしになる（離しはもう来ない）。設定は戻したまま、全部の口・全チャンネルへ
+// All Sound Off（CC120）と All Notes Off（CC123）を流して止める。firmware に
+// 読ませるので、firmware の「押している音」の記録も一緒に消える。
+// m_machine を持って呼ぶこと（midi() は取り直そうとするので使えない）
+void engine::silence_restored()
+{
+	// 鳴っている声が無ければ何もしない。流すと MIDI の直列に並んで、すぐ後ろの曲頭が
+	// 10ms ほど遅れる（止めてから保存した、ふつうの状態ではこうなる）
+	if (m_mu->swpm().sounding_voices() + m_mu->swps().sounding_voices() == 0)
+		return;
+	log_line("戻した状態で声が鳴っていたので止めた（All Sound Off・All Notes Off）");
+	for (int port = 0; port < mu2000::MIDI_PORTS; port++)
+		for (int ch = 0; ch < 16; ch++) {
+			const uint8_t msg[6] = { uint8_t(0xb0 | ch), 120, 0, uint8_t(0xb0 | ch), 123, 0 };
+			for (uint8_t b : msg)
+				m_drv.watch(b, m_mu->midi_in(b, port));
+		}
+}
+
 bool engine::restore(const uint8_t *p, size_t n, const std::vector<uint8_t> &setup)
 {
 	std::string err = "機械まるごとの状態が入っていない";
-	if (p && n && m_mu->load_state(p, n, err))
+	if (p && n && m_mu->load_state(p, n, err)) {
+		silence_restored();
 		return true;
+	}
 	if (p && n)
 		log_line(("状態を読み戻せない: " + err).c_str());
 	if (setup.empty())
@@ -774,6 +808,25 @@ bool engine::restore(const uint8_t *p, size_t n, const std::vector<uint8_t> &set
 	for (uint8_t b : setup)
 		m_drv.watch(b, m_mu->midi_in(b, 0));
 	return true;
+}
+
+// plugin.ini の load_state（既定 1）。状態はホストが起動より前に戻してくることがあり、
+// boot() が plugin.ini を読むより先なので、ここで読む（たまにしか呼ばれない）
+bool engine::load_state_allowed()
+{
+	const std::string local = smu2000::config_dir();
+	if (local.empty())
+		return true;
+	std::FILE *f = std::fopen(smu2000::join(local, "plugin.ini").c_str(), "rb");
+	if (!f)
+		return true;
+	bool allowed = true;
+	char line[256];
+	while (std::fgets(line, sizeof(line), f))
+		if (!std::strncmp(line, "load_state=", 11))
+			allowed = line[11] != '0';
+	std::fclose(f);
+	return allowed;
 }
 
 std::vector<uint8_t> engine::save_state()
@@ -803,6 +856,15 @@ bool engine::load_state(const uint8_t *p, size_t n, const uint8_t *setup, size_t
 {
 	if ((!p || !n) && (!setup || !setup_n))
 		return false;
+	// **plugin.ini の load_state=0** なら、ホストが戻してきた状態を使わない（issue #51）。
+	// 受け取ったことにして捨てる（断るとホストによっては何度も戻そうとする）
+	if (!load_state_allowed()) {
+		if (!m_load_state_noted) {
+			m_load_state_noted = true;
+			log_line("plugin.ini: load_state=0（ホストが戻した状態を使わず、まっさらから始める）");
+		}
+		return true;
+	}
 	std::lock_guard<std::mutex> lock(m_machine);
 	if (state() == status::failed)
 		return false;
