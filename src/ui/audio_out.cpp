@@ -144,6 +144,7 @@ bool audio_out::start(int latency_ms, fill_fn fill, std::string &err, bool exclu
 	m_slack_min.store(~u64(0));
 	m_queue_sum.store(0); m_queue_n.store(0); m_queue_worst.store(0);
 	m_inflight_sum.store(0); m_inflight_n.store(0); m_inflight_worst.store(0);
+	m_cpu_meter.reset();
 
 	m_want_dev = device;
 	m_start_state.store(0);
@@ -173,12 +174,7 @@ void audio_out::stop()
 
 double audio_out::cpu_percent() const
 {
-	const u64 done = m_produced.load();
-	if (!done)
-		return 0.0;
-	const double audio = double(done) / double(m_dev_rate.load());
-	const double busy  = double(m_busy_ticks.load()) / double(m_qpc_freq);
-	return 100.0 * busy / audio;
+	return m_cpu_meter.value();
 }
 
 double audio_out::worst_ms() const
@@ -497,7 +493,6 @@ void audio_out::run(int latency_ms, bool want_exclusive)
 		stage.resize(size_t(CHUNK + 64) * 2);
 		mixbuf.resize(size_t(CHUNK) * 2);
 	}
-
 	hr = client->SetEventHandle(ev);
 	if (FAILED(hr)) { fail("イベントの登録", hr); goto done; }
 
@@ -669,6 +664,8 @@ void audio_out::run(int latency_ms, bool want_exclusive)
 
 			const u64 took = u64(t1.QuadPart - t0.QuadPart);
 			m_busy_ticks.fetch_add(took);
+			m_cpu_meter.add(double(took) / double(m_qpc_freq),
+			                double(want) / double(dev_rate));
 			if (took > m_worst_ticks.load())
 				m_worst_ticks.store(took);
 			m_produced.fetch_add(want);

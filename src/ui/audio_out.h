@@ -14,7 +14,7 @@
 //
 // **溜めは満杯にしない。** 待ち時間は「書いた音の前に溜まっている量」で
 // 決まる。昔は起きるたびに溜めを満杯まで埋めていたので、溜めの長さが
-// そのまま待ち時間になっていた。いまは target だけ溜めて、それ以上は
+// そのまま待ち時間になっていた。いまは target だけ溜め、それ以上は
 // 書かない。target は音源の最悪値より長くないと音が切れる
 // （doc/todo.md 2 番、build/blocktime.exe で測れる）。
 //
@@ -32,6 +32,7 @@
 #pragma once
 
 #include "compat/mamecompat.h"
+#include "cpu_meter.h"
 
 #include <atomic>
 #include <functional>
@@ -219,11 +220,13 @@ private:
 	std::atomic<u64> m_produced{0}, m_late{0};
 	std::atomic<u64> m_slack_min{~u64(0)};
 	std::atomic<u64> m_busy_ticks{0}, m_worst_ticks{0};
+	// Recent CPU display value, accumulated over a fixed amount of audio time.
+	cpu_meter        m_cpu_meter;
 	std::atomic<bool> m_mmcss{false};
 	// 立ち上がりの首尾。**メンバに置くこと。** スレッドは run() を抜けた後に
 	// ここへ書くので、start() のローカルに置くと宙ぶらりんの参照になる
 	std::atomic<int>  m_start_state{0};   // 0 待ち / 1 動いた / 2 だめ
-	std::atomic<u32> m_dev_rate{AUDIO_RATE}, m_dev_channels{2};
+	std::atomic<u32>  m_dev_rate{AUDIO_RATE}, m_dev_channels{2};
 	std::atomic<bool> m_converting{false};
 	std::atomic<bool> m_exclusive{false};
 	std::atomic<double> m_period_ms{0.0}, m_stream_ms{0.0};
