@@ -67,6 +67,16 @@ queued and sent in one go once booting is done. **If you insert it and play
 immediately, there is no sound for a few seconds**, which is the same as
 powering on the hardware.
 
+Clicking **POWER** on the panel switches the machine off and on again
+(issue #197). The settings (work RAM) and any virtual plug-in boards that are
+plugged in are kept. The same power cycle runs by itself when a board is put
+into or taken out of PLG-1 to PLG-3 in the board window: as on the hardware,
+boards are found at power-on, so one does not appear under UTIL → PLG until
+then. While it restarts the plug-in behaves as during boot — silence, with
+incoming MIDI queued and sent afterwards; it takes under a second of real
+time. There is no menu as in `gui.exe`; the click is the switch. For a
+factory reset, use `gui.exe`.
+
 ## Clean-up on stop
 
 (See also "When a saved state is restored" at the end of this section.)
