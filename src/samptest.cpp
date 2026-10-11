@@ -965,6 +965,96 @@ static smu2000::voicelib::item g_lib_item;      // ライブラリの確かめ�
 				      (next_wrong == 0 ? "一致" : "違う"));
 			}
 
+			// サンプルのドラムキットを SysEx で作る（機種 0x68 の AH 30〜34。番地は公式のエディタの定義から。doc/sampling-ram.md）。
+			// キットは 4 つで、バンク MSB 126 のプログラム 113〜116 で選ぶ。鍵の「鳴らすもの」（3k nn 60 の 8 バイト）は
+			// パラメータチェンジでは変わらず、8 バイトまとめたバルクで書く。頭のフラグが 01 なら、サンプル番号（0 から）の
+			// サンプルを、鍵に関わらず元の高さで鳴らす。名前と鍵ごとの設定は、パラメータチェンジで変わる
+			{
+				static rig dk;
+				if (!dk.mu.load_program(dir + "/mu2000_flash.bin") || !dk.mu.load_wave(dir + "/dump"))
+					return 1;
+				dk.mu.load_sintab(dir + "/standin/sin-table.bin");
+				dk.mu.reset();
+				for (u32 i = 0; i < 30 * RATE && !dk.mu.midi_ready(); i += RATE / 100)
+					dk.pump(10);
+				dk.pump(2500);
+				std::vector<u8> got;
+				auto ask = [&](const std::vector<u8> &msg, u32 ms) {
+					got.clear();
+					dk.midi_tap = &got;
+					for (u8 b : msg)
+						dk.mu.midi_in(b, 0);
+					dk.pump(ms);
+					dk.midi_tap = nullptr;
+				};
+				auto bulk = [](u8 ah, u8 am, u8 al, const std::vector<u8> &data) {
+					std::vector<u8> body = { u8((data.size() >> 7) & 0x7f), u8(data.size() & 0x7f), ah, am, al };
+					body.insert(body.end(), data.begin(), data.end());
+					int sum = 0;
+					for (u8 b : body)
+						sum += b;
+					std::vector<u8> msg = { 0xf0, 0x43, 0x00, 0x68 };
+					msg.insert(msg.end(), body.begin(), body.end());
+					msg.push_back(u8((-sum) & 0x7f));
+					msg.push_back(0xf7);
+					return msg;
+				};
+				auto play = [&](int key) {
+					dk.out.clear();
+					dk.collect = true;
+					for (u8 b : { u8(0x90), u8(key), u8(100) })
+						dk.mu.midi_in(b, 0);
+					dk.pump(300);
+					dk.collect = false;
+					for (u8 b : { u8(0x80), u8(key), u8(0) })
+						dk.mu.midi_in(b, 0);
+					std::vector<double> o = dk.out;
+					dk.pump(600);
+					return o;
+				};
+				auto peak = [](const std::vector<double> &x) {
+					double m = 0;
+					for (double v : x)
+						m = std::max(m, std::fabs(v));
+					return m;
+				};
+				// 440Hz と 880Hz の、0.5 秒で消えていく音
+				std::string err;
+				int added = 0;
+				for (double f : { 440.0, 880.0 }) {
+					std::vector<s16> pcm(RATE / 2);
+					for (size_t i = 0; i < pcm.size(); i++)
+						pcm[i] = s16(20000.0 * std::sin(2 * PI * f * double(i) / RATE) * (1.0 - double(i) / double(pcm.size())));
+					added += dk.mu.sampling_add(pcm.data(), pcm.size(), f < 500 ? "low" : "high", err) > 0;
+					dk.pump(300);
+				}
+				// 頼むと、名前が返る
+				ask({ 0xf0, 0x43, 0x20, 0x68, 0x30, 0x00, 0x00, 0xf7 }, 400);
+				const bool named = got.size() == 4 + 2 + 3 + 8 + 2 && std::string(got.begin() + 9, got.begin() + 14) == "Kit01";
+				// 名前の 1 文字目を変える。鍵 30 と 32 にサンプル 1 と 2、鍵 34 はパラメータチェンジで書いてみる（変わらない）
+				ask({ 0xf0, 0x43, 0x10, 0x68, 0x30, 0x00, 0x00, 'X', 0xf7 }, 200);
+				ask(bulk(0x31, 0x30, 0x60, { 0x01, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00 }), 300);
+				ask(bulk(0x31, 0x32, 0x60, { 0x01, 0x00, 0x00, 0x01, 0x00, 0x00, 0x00, 0x00 }), 300);
+				ask({ 0xf0, 0x43, 0x10, 0x68, 0x31, 0x34, 0x60, 0x01, 0xf7 }, 300);
+				ask({ 0xf0, 0x43, 0x20, 0x68, 0x31, 0x32, 0x60, 0xf7 }, 400);
+				const bool src_back = got.size() == 4 + 2 + 3 + 8 + 2 && got[9] == 0x01 && got[12] == 0x01;
+				ask({ 0xb0, 0x00, 126, 0xb0, 0x20, 0, 0xc0, 112 }, 500);
+				const std::string shown = dk.lcd();
+				// 鍵 34 は鳴らない（前の音のリバーブの残りだけ）
+				const std::vector<double> lo = play(0x30), hi = play(0x32), none = play(0x34);
+				// 鍵 30 のレベルを下げる（鍵ごとの設定の 3 番目。パラメータチェンジ）
+				ask({ 0xf0, 0x43, 0x10, 0x68, 0x31, 0x30, 0x02, 0x20, 0xf7 }, 300);
+				const std::vector<double> soft = play(0x30);
+				const double l440 = tone(lo, 440), l880 = tone(lo, 880), h440 = tone(hi, 440), h880 = tone(hi, 880);
+				check(added == 2 && named && src_back && shown.find("Xit01") != std::string::npos && l440 > 0.02 && l880 < 0.05 * l440 &&
+				      h880 > 0.02 && h440 < 0.05 * h880 && peak(none) < 0.03 * peak(hi) && peak(soft) > 0.001 && peak(soft) < 0.6 * peak(lo),
+				      "サンプルのドラムキットを SysEx で作る",
+				      std::string("名前 ") + (named ? "返る" : "返らない") + "、鳴らすものの読み戻し " + (src_back ? "同じ" : "違う") + " [" + shown +
+				      "] 鍵 30: 440Hz " + std::to_string(l440) + "（880Hz " + std::to_string(l880) + "）、鍵 32: 880Hz " + std::to_string(h880) +
+				      "（440Hz " + std::to_string(h440) + "）、パラメータチェンジで書いた鍵 34 の山 " + std::to_string(peak(none)) +
+				      "、レベルを下げて " + std::to_string(peak(soft) / std::max(1e-12, peak(lo))) + " 倍");
+			}
+
 			// 要素を重ねる。要素 1 = 組 16 を左いっぱい、要素 2 = 組 39 を右いっぱいにして、右の大きさを見る
 			// （右にもリバーブで左の音が少し回るので、差は 20dB ほど）
 			// （実機でも 2 要素が鳴ることを確かめた。doc/sampling-ram.md）
