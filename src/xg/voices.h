@@ -95,7 +95,7 @@ public:
 		if (!m_ok || (index < 0 && index != ICON_DRUM) || index > 57)
 			return false;
 		for (int y = 0; y < 16; y++)
-			rows[y] = index == ICON_DRUM ? u16(word(DRUM_ICON + u32(y) * 2) & 0xfffe) : word(ICONS + u32(index) * 32 + u32(y) * 2);
+			rows[y] = index == ICON_DRUM ? word(DRUM_ICON + u32(y) * 2) : word(ICONS + u32(index) * 32 + u32(y) * 2);
 		return true;
 	}
 	// パートの塊（ワーク RAM の写し）から、選んでいる音色の記録の番地。無ければ 0
@@ -301,7 +301,7 @@ public:
 			if (word(DRUM_ICON) != 0x000e)
 				return false;
 			for (int y = 0; y < 16; y++)
-				rows[y] = word(DRUM_ICON + u32(y) * 2) & 0xfffe;
+				rows[y] = word(DRUM_ICON + u32(y) * 2);
 			return true;
 		}
 		if (rec < VOICES || rec + 16 > VOICES_END)
@@ -328,7 +328,7 @@ public:
 			if (word(DRUM_ICON) != 0x000e)
 				return false;
 			for (int y = 0; y < 16; y++)
-				rows[y] = word(DRUM_ICON + u32(y) * 2) & 0xfffe;
+				rows[y] = word(DRUM_ICON + u32(y) * 2);
 			return true;
 		}
 		const u32 p = ICONS + u32((*m_rom)[ICON_OF_PROGRAM + u32(prog & 0x7f)]) * 32;
@@ -346,7 +346,7 @@ public:
 			if (word(DRUM_ICON) != 0x000e)
 				return false;                              // 版が違う
 			for (int y = 0; y < 16; y++)
-				rows[y] = word(DRUM_ICON + u32(y) * 2) & 0xfffe;
+				rows[y] = word(DRUM_ICON + u32(y) * 2);
 			return true;
 		}
 		const u32 rec = record(part_ram);
