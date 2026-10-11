@@ -8,6 +8,8 @@
 // 両方の wav を比べれば、CLAP の口で音が変わっていないかが分かる。
 //
 // --adc-silence は A/D INPUT（音声入力の口）に無音を渡す。付けなければ入力の口は繋がない。
+// --fx はエフェクトとしての口（S-MU2000 FX。issue #191）を作り、A/D INPUT に 440Hz の正弦を流す。入力がメインの口で、
+//   MIDI で何も設定しなくても入れた音が出てくるかを見る
 // REAPER などは CLAP の入力の口をトラックのチャンネルに繋ぐので、その形を真似る
 //
 //   clapprobe <S-MU2000.clap> --automation
@@ -381,6 +383,7 @@ int main(int argc, char **argv)
 	int block = 512;
 	double extra = 3.0;
 	bool adc = false;
+	bool fx = false;
 	bool clap_notes = false;   // ノートオン・オフを CLAP 流（CLAP_EVENT_NOTE_*）で渡す
 	// SysEx を、同じ区間のチャンネルメッセージの**後ろ**にまとめて渡す（issue #51。foo_midi の
 	// ように SysEx を別に渡すホストのまね）。時刻は変えない。プラグインは同じ時刻の
@@ -393,6 +396,7 @@ int main(int argc, char **argv)
 		else if (!std::strcmp(argv[i], "--block") && i + 1 < argc) block = std::atoi(argv[++i]);
 		else if (!std::strcmp(argv[i], "--tail") && i + 1 < argc) extra = std::atof(argv[++i]);
 		else if (!std::strcmp(argv[i], "--adc-silence")) adc = true;
+		else if (!std::strcmp(argv[i], "--fx")) fx = adc = true;
 		else if (!std::strcmp(argv[i], "--clap-notes")) clap_notes = true;
 		else if (!std::strcmp(argv[i], "--sysex-last")) sysex_last = true;
 		else if (!std::strcmp(argv[i], "--broadcast")) broadcast = true;
@@ -410,10 +414,21 @@ int main(int argc, char **argv)
 	if (!entry || !entry->init(dll.c_str())) { std::fprintf(stderr, "clap_entry が無い\n"); return 1; }
 	const auto *fac = static_cast<const clap_plugin_factory_t *>(entry->get_factory(CLAP_PLUGIN_FACTORY_ID));
 	if (!fac || fac->get_plugin_count(fac) < 1) { std::fprintf(stderr, "工場が無い\n"); return 1; }
-	const clap_plugin_descriptor_t *desc = fac->get_plugin_descriptor(fac, 0);
+	// 口は 2 つ: 0 = 音源、1 = 同じ本体をエフェクトとして（--fx で選ぶ）
+	if (fx && fac->get_plugin_count(fac) < 2) { std::fprintf(stderr, "エフェクトとしての口が無い\n"); return 1; }
+	const clap_plugin_descriptor_t *desc = fac->get_plugin_descriptor(fac, fx ? 1 : 0);
 	std::printf("%s（%s）\n", desc->name, desc->id);
 	const clap_plugin_t *plug = fac->create_plugin(fac, &kHost, desc->id);
 	if (!plug || !plug->init(plug)) { std::fprintf(stderr, "作れない\n"); return 1; }
+	if (const auto *ports = static_cast<const clap_plugin_audio_ports_t *>(plug->get_extension(plug, CLAP_EXT_AUDIO_PORTS))) {
+		clap_audio_port_info_t info{};
+		if (ports->get(plug, 0, true, &info)) {
+			const bool main_in = (info.flags & CLAP_AUDIO_PORT_IS_MAIN) != 0;
+			std::printf("%s: 音声入力は%s\n", main_in == fx ? "OK" : "NG", main_in ? "メインの口" : "補助の口");
+			if (main_in != fx)
+				return 2;
+		}
+	}
 
 	std::vector<smf::event> events;
 	std::string err;
@@ -445,6 +460,9 @@ int main(int argc, char **argv)
 		ev.midi.reserve(4096); ev.sysex.reserve(256); ev.notes.reserve(4096);
 		std::fill(il.begin(), il.end(), 0.0f);
 		std::fill(ir.begin(), ir.end(), 0.0f);
+		if (fx)
+			for (uint32_t k = 0; k < n; k++)
+				il[k] = ir[k] = float(0.3 * std::sin(2 * 3.14159265358979 * 440.0 * double(pos + k) / rate));
 		while (next < events.size() && events[next].time * rate < double(pos + n)) {
 			const smf::event &e = events[next++];
 			if (e.bytes.empty())

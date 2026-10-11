@@ -132,6 +132,11 @@ public:
 	// fill() が順番どおりに流す（issue #19）
 	// port は 0 が MIDI IN A（パート 1-16）、1 が B（17-32）、2 が C（33-48）、3 が D（49-64）
 	void midi(const uint8_t *bytes, size_t n, int port = 0);
+	// **エフェクトとして挿したとき用**（VST3・CLAP の「S-MU2000 FX」。issue #191）。A/D パートの音量は XG の
+	// 初期値が 0 なので、そのままでは入れた音が出てこない。起動し切った最初の区間で、AD1・AD2 の音量を 100、
+	// パンを左いっぱい・右いっぱいにする（ステレオの入力がステレオのまま通る）。ホストが状態を戻したら
+	// （load_state）その値が勝つので、これは新しく挿したときにだけ効く
+	void want_ad_through() { m_ad_through.store(true, std::memory_order_release); }
 	// オールサウンドオフ + オールノートオフを流す。mask は口ごとのチャンネルのビット
 	// （bit 0 が 1ch）で、ports 個ぶん並べて渡す。全チャンネルに流すと 1 口あたり
 	// 192 バイト＝31250bps で 61ms かかり、そのあとに続く音が丸ごと遅れるので、
@@ -264,6 +269,7 @@ private:
 	void silence_restored();       // 戻した状態で鳴っていた声を止める（m_machine を持って呼ぶ）
 	static bool load_state_allowed();   // plugin.ini の load_state（既定 1）
 	bool m_load_state_noted = false;
+	std::atomic<bool> m_ad_through{false};   // want_ad_through()。fill が 1 度だけ流す
 	// 機械まるごとの状態を戻す。読めなければ XG の値の控えを流す（m_machine を持って呼ぶ）
 	bool restore(const uint8_t *p, size_t n, const std::vector<uint8_t> &setup);
 	void one_sample(float &l, float &r);

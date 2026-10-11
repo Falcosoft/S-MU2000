@@ -628,6 +628,20 @@ void engine::fill(float *left, float *right, int n, const float *in_l, const flo
 	}
 	push_input(in_l, in_r, n);
 	apply_deferred_state();
+	// エフェクトとして挿された直後に 1 度だけ: A/D パートを鳴るようにする（engine.h の want_ad_through）。
+	// XG の A/D パート 10 0n: 0B = 音量、0E = パン（1 = 左いっぱい、127 = 右いっぱい）
+	if (m_ad_through.load(std::memory_order_acquire) && m_ad_through.exchange(false)) {
+		static const u8 setup[4][9] = {
+			{ 0xf0, 0x43, 0x10, 0x4c, 0x10, 0x00, 0x0b, 100, 0xf7 },
+			{ 0xf0, 0x43, 0x10, 0x4c, 0x10, 0x01, 0x0b, 100, 0xf7 },
+			{ 0xf0, 0x43, 0x10, 0x4c, 0x10, 0x00, 0x0e, 1, 0xf7 },
+			{ 0xf0, 0x43, 0x10, 0x4c, 0x10, 0x01, 0x0e, 127, 0xf7 },
+		};
+		for (const auto &m : setup)
+			for (u8 b : m)
+				m_mu->midi_in(b, 0);
+		log_line("エフェクトとして挿された: A/D パート 1・2 の音量を 100、パンを左右にした");
+	}
 	// **口の入切はここで**（gui.exe の ui/engine.h と同じ場所）
 	if (const int want = m_want_native.exchange(-1); want >= 0) {
 		m_mu->set_native_engine(want);
@@ -833,6 +847,8 @@ bool engine::load_state(const uint8_t *p, size_t n, const uint8_t *setup, size_t
 		}
 		return true;
 	}
+	// 戻す状態があるなら、それが A/D パートの値も持っている。挿したときの初期設定は入れない
+	m_ad_through.store(false, std::memory_order_release);
 	std::lock_guard<std::mutex> lock(m_machine);
 	if (state() == status::failed)
 		return false;

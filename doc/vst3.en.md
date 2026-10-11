@@ -364,6 +364,28 @@ a sidechain input. Unconnected, it is silent. If the host rate is not
 parts. The A/D part volume defaults to 0 in XG, so raise it to hear anything
 (XG parameter 10 00 0B; AD2 is 10 01 0B). Input effects apply as on any part.
 
+### As an effect (S-MU2000 FX)
+
+The MU2000 is also a multi-effect unit: a guitar or a microphone into A/D
+INPUT, through the insertion, variation, reverb and chorus effects. For that
+the VST3 and the CLAP carry a second plug-in, **`S-MU2000 FX`**, next to the
+instrument `S-MU2000` (issue #191). It is the same machine; three things differ:
+
+* It is categorised as an **effect**, so it goes into an audio track's effect slot.
+* `A/D Input` is the **main input**, so the track's audio goes straight in (no
+  sidechain routing).
+* When newly inserted it sets **A/D parts 1 and 2 to volume 100, panned hard
+  left and hard right**, so a stereo input comes out in stereo (with no effect
+  applied, about 2.4 dB louder than it went in).
+
+Effects are applied as on the hardware: select an A/D part (A1, A2) with PART
+on the panel, or point an insertion effect at AD1 / AD2 in the effects window.
+Reopening a project restores the saved values and does not redo the initial
+setup. An XG System On puts the A/D part volume back to 0, as XG says it must.
+The MIDI inputs are the same as the instrument's, so the effect values can be
+moved by MIDI where the DAW allows it. The VST2 has no such second plug-in (one
+DLL can only be one).
+
 ## SmartMedia
 
 Clicking the **card slot** on the panel (bottom left) brings up the same menu
