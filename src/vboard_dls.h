@@ -90,9 +90,16 @@ struct dls_bank {
 	std::vector<dls_instrument> instruments;
 	std::string path;
 
+	// バンクとプログラムから音色を探す。ぴったりのものが無いときは、近いものへ順に下がる:
+	//   1. MSB・LSB とも同じ
+	//   2. MSB が同じで LSB が 0（GS 向けの MIDI は LSB で SC-55 などのマップを選ぶが、gm.dls のような
+	//      バンクにはその LSB の音色が無い。LSB を見ないことにすれば、MSB のバリエーションはそのまま鳴る。issue #196）
+	//   3. MSB・LSB とも 0（同じプログラムの基本の音色）
+	//   4. 同じプログラムの最初のもの
+	// LSB を持つバンク（XG 向けの DLS）は 1 で当たるので、今までどおり。ドラムは無ければ最初のキット
 	const dls_instrument *find(bool drum, u8 msb, u8 lsb, u8 program) const
 	{
-		const dls_instrument *same_prog = nullptr, *any = nullptr;
+		const dls_instrument *same_msb = nullptr, *base = nullptr, *same_prog = nullptr, *any = nullptr;
 		for (const dls_instrument &i : instruments) {
 			if (i.drum != drum)
 				continue;
@@ -102,11 +109,14 @@ struct dls_bank {
 				continue;
 			if (i.msb == msb && i.lsb == lsb)
 				return &i;
-			if (!same_prog || (i.msb == 0 && i.lsb == 0))
+			if (!same_msb && i.msb == msb && i.lsb == 0)
+				same_msb = &i;
+			if (i.msb == 0 && i.lsb == 0)
+				base = &i;
+			if (!same_prog)
 				same_prog = &i;
 		}
-		// 無いバンクは同じプログラムの基本の音色で。ドラムは無ければ最初のキット
-		return same_prog ? same_prog : drum ? any : nullptr;
+		return same_msb ? same_msb : base ? base : same_prog ? same_prog : drum ? any : nullptr;
 	}
 };
 
