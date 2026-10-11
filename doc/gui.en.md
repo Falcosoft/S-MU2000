@@ -188,6 +188,13 @@ opened at the next start. The default is "not used". It feeds sampling
 (SAMPLING → REC) and the A/D parts. The A/D part volume defaults to 0, so
 raise it when you want to hear the input.
 
+The panel's **A/D INPUT knob** sets the level of the incoming audio (on the
+hardware, the knob in front of the A/D converter). Drag it or turn it with the
+wheel. Where it starts is unity; fully left is silence, fully right about
++14 dB. Too much clips at 16 bits, as the converter would. It applies to
+sampling and to the A/D parts alike. The position is remembered as `ad_knob`
+in `gui.ini`.
+
 **When comparing with the real unit**, connect MIDI THRU A to the unit's
 first port and MIDI THRU B to its second. The same data from the sequencer
 reaches the same parts here and on the hardware.

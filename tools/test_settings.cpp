@@ -91,7 +91,7 @@ static void persistence()
 	in.card = "prepared-card.img"; in.board_file = "voices.ini"; in.board_fc[0] = "fc.ini";
 	in.board_fc_cc = "custom mappings";
 	in.audio_in = "Microphone"; in.in[0] = "Keyboard"; in.edit_out = "Synth";
-	in.volume = 0.4f; in.analog = true; in.thin_bends = true; in.fold34 = false;
+	in.volume = 0.4f; in.ad_knob = 0.8f; in.analog = true; in.thin_bends = true; in.fold34 = false;
 	ui::apply_settings(ui::collect_settings(in), out);
 	ui::clear_processing_settings(out);
 	require(out.audio == ui::audio_preferences{} && out.audio_routes.empty() && !out.limiter && !out.native_fx && !out.native_engine,
@@ -99,7 +99,7 @@ static void persistence()
 	require(out.board == 1 && out.board_part == 17 && out.board_more[0] == 2 && out.card == in.card &&
 	        out.board_file == in.board_file && out.board_fc[0] == in.board_fc[0] && out.board_fc_cc == in.board_fc_cc &&
 	        out.audio_out == in.audio_out && out.audio_in == in.audio_in && out.in[0] == in.in[0] && out.edit_out == in.edit_out &&
-	        out.volume == in.volume && out.analog && out.thin_bends && !out.fold34,
+	        out.volume == in.volume && out.ad_knob == in.ad_knob && out.analog && out.thin_bends && !out.fold34,
 	        "--nomidi discarded existing profile settings");
 	ui::remembered invalid;
 	ui::apply_settings({{"audio_rate", "48000garbage"}, {"audio_buffer", "-1"}, {"audio_left", "3"}, {"audio_right", "3"}}, invalid);

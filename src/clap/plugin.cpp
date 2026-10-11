@@ -415,7 +415,7 @@ private:
 
 	bool save(const clap_ostream_t *s)
 	{
-		const int32_t version = 4;
+		const int32_t version = 5;
 		const float gain = m_engine.panel().gain();
 		m_engine.card_flush();   // プロジェクトを保存するときに、カードのファイルも揃える
 		if (!write_all(s, &version, sizeof(version)) || !write_all(s, &gain, sizeof(gain)))
@@ -435,7 +435,11 @@ private:
 		// 版 4: XG の値だけの控え（VST3 版と同じ）
 		const std::vector<uint8_t> setup = m_engine.save_xg_setup();
 		const int32_t sn = int32_t(setup.size());
-		return write_all(s, &sn, sizeof(sn)) && (!sn || write_all(s, setup.data(), setup.size()));
+		if (!write_all(s, &sn, sizeof(sn)) || (sn && !write_all(s, setup.data(), setup.size())))
+			return false;
+		// 版 5: パネルの A/D INPUT のつまみ（0〜1。VST3 版と同じ）
+		const float ad_knob = m_engine.panel().ad_knob();
+		return write_all(s, &ad_knob, sizeof(ad_knob));
 	}
 
 	bool load(const clap_istream_t *s)
@@ -479,6 +483,13 @@ private:
 				if (!read_all(s, setup.data(), setup.size()))
 					setup.clear();
 			}
+		}
+		// 版 5 から: パネルの A/D INPUT のつまみ。無ければ等倍の位置
+		{
+			float ad_knob = ui::bridge::AD_KNOB_DEFAULT, v = 0;
+			if (version >= 5 && read_all(s, &v, sizeof(v)) && v >= 0.0f && v <= 1.0f)
+				ad_knob = v;
+			m_engine.panel().set_ad_knob(ad_knob);
 		}
 
 		// 起動が終わっていないと戻せない。終わるまで待つ

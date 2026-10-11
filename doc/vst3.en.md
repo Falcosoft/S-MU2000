@@ -386,6 +386,10 @@ The MIDI inputs are the same as the instrument's, so the effect values can be
 moved by MIDI where the DAW allows it. The VST2 has no such second plug-in (one
 DLL can only be one).
 
+The input level is set with the panel's **A/D INPUT knob** (in the instrument
+as well). Where it starts is unity; fully left is silence, fully right about
++14 dB. The position is saved with the project (VST3 and CLAP).
+
 ## SmartMedia
 
 Clicking the **card slot** on the panel (bottom left) brings up the same menu

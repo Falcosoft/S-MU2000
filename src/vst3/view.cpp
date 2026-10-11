@@ -164,6 +164,7 @@ struct plug_view::impl
 		std::snprintf(status, sizeof(status), "%s", eng.message().c_str());
 
 		panel.set_volume(eng.panel().gain());
+		panel.set_adgain(eng.panel().ad_knob());
 		panel.paint(dl, s, eng.panel().buttons(), status);
 		// 帯はパネルの**あと**に描く（パネルは全面を塗る）
 		bar.paint(dl, panel.width(), fonts.label, fonts.label_px);

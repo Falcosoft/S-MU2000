@@ -499,7 +499,12 @@ void engine::one_sample(float &l, float &r)
 	s32 li = 0, ri = 0;
 	// A/D INPUT。溜めが空なら無音（入力の変換器の先読みの分だけ、頭が少し欠ける）
 	if (m_in_r != m_in_w) {
-		m_mu->set_audio_input(m_in_q[m_in_r * 2], m_in_q[m_in_r * 2 + 1]);
+		// パネルの A/D INPUT のつまみ（bridge::ad_gain。等倍のときは触らない）
+		const float g = m_bridge.ad_gain();
+		if (g != 1.0f)
+			m_mu->set_audio_input(ui::bridge::ad_scaled(m_in_q[m_in_r * 2], g), ui::bridge::ad_scaled(m_in_q[m_in_r * 2 + 1], g));
+		else
+			m_mu->set_audio_input(m_in_q[m_in_r * 2], m_in_q[m_in_r * 2 + 1]);
 		m_in_r = (m_in_r + 1) & IN_MASK;
 	} else {
 		m_mu->set_audio_input(0, 0);

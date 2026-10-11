@@ -501,6 +501,16 @@ public:
 					setup.clear();
 			}
 		}
+		// 版 5 から: パネルの A/D INPUT のつまみ。無ければ（前の版・起動中に保存された曲）等倍の位置
+		{
+			float ad_knob = ui::bridge::AD_KNOB_DEFAULT;
+			if (version >= 5) {
+				float v = 0;
+				if (stream->read(&v, sizeof(v), &got) == kResultOk && got == sizeof(v) && v >= 0.0f && v <= 1.0f)
+					ad_knob = v;
+			}
+			m_engine.panel().set_ad_knob(ad_knob);
+		}
 
 		// 起動が終わっていないと戻せない。終わるまで待つ
 		m_engine.wait_ready(3000);
@@ -529,7 +539,7 @@ public:
 		// 開き直しても、音色もエフェクトもそのまま戻る
 		if (!stream)
 			return kResultFalse;
-		int32 version = 4;
+		int32 version = 5;
 		float gain = m_engine.panel().gain();
 		m_engine.card_flush();   // プロジェクトを保存するときに、カードのファイルも揃える
 		int32 written = 0;
@@ -556,6 +566,9 @@ public:
 		stream->write(&sn, sizeof(sn), &written);
 		if (sn)
 			stream->write(const_cast<uint8_t *>(setup.data()), sn, &written);
+		// 版 5: パネルの A/D INPUT のつまみ（0〜1）
+		float ad_knob = m_engine.panel().ad_knob();
+		stream->write(&ad_knob, sizeof(ad_knob), &written);
 		return kResultOk;
 	}
 
