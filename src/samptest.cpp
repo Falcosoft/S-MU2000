@@ -42,6 +42,7 @@ struct rig {
 	std::vector<double> out;        // 集めている間の出力（左右の平均）
 	double sum_l = 0, sum_r = 0;    // 集めている間の左・右の二乗の和（パンを見る）
 	bool collect = false;
+	std::vector<u8> *midi_tap = nullptr;   // 置いてあれば、音源が MIDI OUT から出したものをここへ集める
 
 	void pump(u32 ms)
 	{
@@ -53,7 +54,9 @@ struct rig {
 			s32 l, r;
 			mu.run_sample(l, r);
 			u8 b;
-			while (mu.midi_out_take(b)) {}
+			while (mu.midi_out_take(b))
+				if (midi_tap)
+					midi_tap->push_back(b);
 			if (collect) {
 				out.push_back((double(l) + double(r)) * 0.5 / mu2000::DAC_FULL_SCALE);
 				sum_l += (double(l) / mu2000::DAC_FULL_SCALE) * (double(l) / mu2000::DAC_FULL_SCALE);
@@ -887,6 +890,80 @@ static smu2000::voicelib::item g_lib_item;      // ライブラリの確かめ�
 			check(differ == 0 && back.name == "SxCopy" && back.el[0].rom_wave == 16 && back.el[0].coarse == 7,
 			      "サンプル音色の SysEx で写す",
 			      std::to_string(msgs.size()) + " 通 " + std::to_string(bytes) + " バイト、違う " + std::to_string(differ) + " バイト");
+
+			// 波形 ROM を SysEx で読む（機種 0x68。shingo45endo さんの mu-wave-romdumper が見つけた道）。
+			// 「サンプリングの書き込み位置」（番地 00 00 00、64 バイト単位の 28 ビット）に firmware はサンプリング RAM の頭
+			// 0x01000000 を 32 ビットで足し、範囲を見ない。0x0FF00000 + n を置くと足し算があふれて、波形 ROM の
+			// 32 ビット語 16n 個目を指す。そこへ「波形データ」（番地 00 01 00）を頼むと 64 バイトが 74 バイトに詰めて返り、
+			// 位置は 64 バイト進む。firmware が SWP30 の波形の直接読み出しを自分で回すので、エミュのその道の試験にもなる。
+			// 位置は書くだけで、読み返す要求には firmware が答えない。終わったら 0 に置いておく（サンプルを送る側は、
+			// 送る前に必ず自分で位置を置く）
+			{
+				std::vector<u8> got;
+				auto ask = [&](const std::vector<u8> &msg, u32 ms) {
+					got.clear();
+					k.midi_tap = &got;
+					for (u8 b : msg)
+						k.mu.midi_in(b, 0);
+					k.pump(ms);
+					k.midi_tap = nullptr;
+				};
+				auto bulk = [](const std::vector<u8> &addr_and_data) {
+					std::vector<u8> body = { u8(((addr_and_data.size() - 3) >> 7) & 0x7f), u8((addr_and_data.size() - 3) & 0x7f) };
+					body.insert(body.end(), addr_and_data.begin(), addr_and_data.end());
+					int sum = 0;
+					for (u8 b : body)
+						sum += b;
+					std::vector<u8> msg = { 0xf0, 0x43, 0x00, 0x68 };
+					msg.insert(msg.end(), body.begin(), body.end());
+					msg.push_back(u8((-sum) & 0x7f));
+					msg.push_back(0xf7);
+					return msg;
+				};
+				// 返ってきた 1 通（F0 43 0n 68 長さ 2 番地 3 中身 74 和 F7）を、ROM の絵と同じ並び（32 ビット語のリトルエンディアン）の 64 バイトにする
+				auto unpack = [&](u8 *le) {
+					if (got.size() != 4 + 2 + 3 + 74 + 2 || got[0] != 0xf0 || got[3] != 0x68 || got[6] != 0x00 || got[7] != 0x01 || got[8] != 0x00)
+						return false;
+					const u8 *p = got.data() + 9;
+					u8 raw[64];
+					for (int g = 0; g < 9; g++)
+						for (int i = 0; i < 7; i++)
+							raw[g * 7 + i] = u8(p[g * 8 + i] | ((p[g * 8 + 7] & (0x40 >> i)) ? 0x80 : 0));
+					raw[63] = u8(p[72] | ((p[73] & 1) ? 0x80 : 0));
+					// 語ごとに「下の 16 ビット・上の 16 ビット」の順で、それぞれビッグエンディアン
+					for (int i = 0; i < 64; i += 2) {
+						le[i] = raw[i + 1];
+						le[i + 1] = raw[i];
+					}
+					return true;
+				};
+				const std::vector<u8> ask_block = { 0xf0, 0x43, 0x20, 0x68, 0x00, 0x01, 0x00, 0xf7 };
+				const auto rom = k.mu.wave_rom();
+				// ROM は 0x800000 語。頭、1 組目のチップの終わり、2 組目の頭、途中、終わり
+				const u32 where[] = { 0x000000, 0x012340, 0x3ffff0, 0x400000, 0x567890, 0x7ffff0 };
+				int read = 0, wrong = 0, next_wrong = -1;
+				for (u32 dword : where) {
+					const u32 pos = (0x0ff00000 + dword / 16) & 0x0fffffff;
+					ask(bulk({ 0x00, 0x00, 0x00, u8((pos >> 21) & 0x7f), u8((pos >> 14) & 0x7f), u8((pos >> 7) & 0x7f), u8(pos & 0x7f) }), 100);
+					ask(ask_block, 400);
+					u8 le[64];
+					if (!unpack(le)) {
+						wrong++;
+						continue;
+					}
+					read++;
+					wrong += std::memcmp(le, rom->data() + size_t(dword) * 4, 64) != 0;
+					// 位置を置き直さずにもう 1 度頼むと、次の 64 バイトが返る
+					if (dword == 0x012340) {
+						ask(ask_block, 400);
+						next_wrong = !unpack(le) || std::memcmp(le, rom->data() + size_t(dword + 16) * 4, 64) != 0;
+					}
+				}
+				ask(bulk({ 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00 }), 100);   // 位置を 0 に
+				check(read == 6 && wrong == 0 && next_wrong == 0, "波形 ROM を SysEx で読む（書き込み位置のあふれ）",
+				      "読めた " + std::to_string(read) + "/6 か所、ROM と違う " + std::to_string(wrong) + "、続けて読んだ次の 64 バイト " +
+				      (next_wrong == 0 ? "一致" : "違う"));
+			}
 
 			// 要素を重ねる。要素 1 = 組 16 を左いっぱい、要素 2 = 組 39 を右いっぱいにして、右の大きさを見る
 			// （右にもリバーブで左の音が少し回るので、差は 20dB ほど）
