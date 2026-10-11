@@ -359,6 +359,11 @@ void plug_view::repaint(ImDrawList *dl, const ui::im::fonts &fonts, int w, int h
 	// パラメータの層: 音源の返事を読み、見えている面の読み返しを頼む
 	// (this is the GUI thread -- the Win32 timer and the macOS one both arrive
 	//  here, so the polling happens once per frame on either platform)
+	// The board window asks for a power cycle when a virtual plug-in board goes in or out
+	// (ui/bridge.h request_restart). gui.exe answers it in its app; here the view does
+	if (m_engine.panel().take_restart_request())
+		m_engine.restart();
+
 	m_impl->panel.tick(m_engine.panel());
 	// PC で触る窓（一覧・エディタ）。見えていなければ何もしない
 	if (m_window)
@@ -383,6 +388,13 @@ void plug_view::mouse_down(int x, int y)
 	}
 	if (y < ui::toolbar::HEIGHT)
 		return;                  // 帯の隙間
+
+	// POWER: the plug-in has no menu here, so a click is the switch itself - off and on again,
+	// keeping the settings and the boards that are plugged in (engine::restart, issue #197)
+	if (m_impl->panel.on_power(x, y)) {
+		m_engine.restart();
+		return;
+	}
 
 	// The card slot is not a button but a menu: a click there is about the image
 	// in the slot, and the machine is told nothing

@@ -109,6 +109,11 @@ public:
 	// 起動が終わるまで待つ。**DAW の本スレッドからだけ**呼ぶこと。
 	// 待ちきれずに時間切れなら false。始まっていなければ始めてから待つ
 	bool wait_ready(int ms);
+	// **電源を入れ直す**（パネルの POWER、架空のプラグインボードを挿した・外したとき。issue #197）。
+	// 設定（ワーク RAM）と挿したボードはそのまま持ち越す。実機の電源の入れ直しと同じで、firmware が
+	// ボードを探すところからやり直すので、挿したボードが UTIL → PLG に並ぶ。起動が済んでいるときだけ効き、
+	// 別スレッドで進めてすぐ返る。その間は「起動中」（音は無音、届いた MIDI は溜めて後から流す）
+	void restart();
 	// 止めておく・戻す。IPluginBase::terminate / initialize から（**音声スレッドが回っていないとき**）。
 	// park は起動を待ちきってから、スレーブの別スレッドを止める。この DLL のコードを走るスレッドを
 	// 残さないため（ホストが本体を手放さないまま DLL を外すと、残ったスレッドが消えたコードを走って落ちる）。
@@ -291,6 +296,7 @@ private:
 	// 起動は 1 度だけ。start() が exchange で守る（2 度やると
 	// 動き中の機械 m_mu を丸ごと差し替えてしまう）
 	std::atomic<bool>   m_boot_once{false};
+	std::atomic<bool>   m_restarting{false};   // restart() が走っている
 	bool                m_threaded = true;   // plugin.ini の threaded（unpark で戻す）
 	bool                m_parked = false;
 	std::mutex          m_park_mutex;
