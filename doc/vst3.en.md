@@ -396,6 +396,9 @@ The MIDI inputs are the same as the instrument's, so the effect values can be
 moved by MIDI where the DAW allows it. The VST2 has no such second plug-in (one
 DLL can only be one).
 
+Reported working in: **Cubase 15** (VST3; it shows up among the effects and is
+usable, issue #191). No reports from other DAWs yet.
+
 The input level is set with the panel's **A/D INPUT knob** (in the instrument
 as well). Where it starts is unity; fully left is silence, fully right about
 +14 dB. The position is saved with the project (VST3 and CLAP).
