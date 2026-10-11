@@ -104,6 +104,14 @@ the GUI and the plug-ins both find the ROMs.
 A spare MIDI-based path also exists, and dumps from both paths have been verified
 byte-identical.
 
+**Without touching the firmware:** shingo45endo's
+[mu-wave-romdumper](https://shingo45endo.github.io/mu-wave-romdumper/) reads the wave ROM from a web
+page over MIDI, using SysEx messages the stock firmware already answers, so nothing is written to the
+unit. It needs a MIDI interface (In and Out) and about 4 hours. It is a separate project and has not
+been run on hardware here, but the same messages return the wave ROM byte for byte from the stock
+firmware running in this emulator. See [doc/dump](doc/dump/README.en.md#without-changing-the-firmware)
+for how its files map onto the ones S-MU2000 reads.
+
 ## Getting Started
 
 See [doc/manual.en.md](doc/manual.en.md).

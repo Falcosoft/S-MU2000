@@ -105,6 +105,14 @@ gui とプラグインは、同じ順番でこのディレクトリを探す（�
 MIDI 経由の予備の経路もあり、両方で吸ったものが 1 バイト残らず一致することを
 確かめてある。
 
+**ファームを書き換えずに吸う方法**もある。shingo45endo さんの
+[mu-wave-romdumper](https://shingo45endo.github.io/mu-wave-romdumper/) は、純正の firmware が
+もともと答える SysEx だけを使って、ブラウザから MIDI で波形 ROM を読む。本体には何も書き込まない。
+MIDI インターフェース（IN と OUT）が要り、約 4 時間かかる。別のプロジェクトで、こちらの実機では
+試していないが、同じメッセージをこのエミュの中の純正 firmware に送ると、波形 ROM が 1 バイト残らず
+そのまま返ってくる。できたファイルの当てはめ方は
+[doc/dump](doc/dump/README.md#ファームを書き換えずに吸う) に書いた。
+
 ## 使い方
 
 **はじめて使うなら [doc/manual.md](doc/manual.md)**（用意するもの → 作る → 鳴らす → 画面 → DAW の通しの手引き。English: [doc/manual.en.md](doc/manual.en.md)）。
