@@ -2442,6 +2442,23 @@ static smu2000::voicelib::item g_lib_item;      // ライブラリの確かめ�
 				};
 				send({ 0xf5, 5, 0xb0, 91, 0, 0xb9, 91, 0, 0xc0, 0 });
 				const std::vector<double> a4 = play(0, 69), a5 = play(0, 81), kick = play(9, 36), none = play(9, 40);
+				// バンクの下がり方（issue #196）。ぴったりが無ければ「MSB が同じで LSB 0」、それも無ければ「MSB・LSB とも 0」
+				{
+					smu2000::vboard::dls_bank bank;
+					auto add = [&](u8 msb, u8 lsb, u8 prog, const char *name) {
+						smu2000::vboard::dls_instrument i;
+						i.msb = msb; i.lsb = lsb; i.program = prog; i.name = name;
+						bank.instruments.push_back(i);
+					};
+					add(0, 0, 80, "base"); add(1, 0, 80, "var1"); add(8, 0, 80, "var8"); add(0, 3, 80, "xg3"); add(0, 0, 81, "other");
+					auto name = [&](u8 msb, u8 lsb, u8 prog) {
+						const smu2000::vboard::dls_instrument *i = bank.find(false, msb, lsb, prog);
+						return i ? i->name : std::string("-");
+					};
+					const std::string got = name(1, 1, 80) + " " + name(1, 0, 80) + " " + name(8, 2, 80) + " " + name(0, 3, 80) + " " +
+					                        name(0, 5, 80) + " " + name(5, 5, 80) + " " + name(1, 1, 81) + " " + name(0, 0, 99);
+					check(got == "var1 var1 var8 xg3 base base other -", "DLS のボード: 無いバンクは LSB を 0 にして探し、それも無ければ基本の音色", got);
+				}
 				// ゲートの無い音（ノートオンのすぐ後にノートオフ）も、リリースの長いドラムは鳴りきる（gm.dls のドラムは
 				// リリースが 40 秒ほど）。上の小さな DLS にはエンベロープが無いので、音源に直に音色を渡して確かめる
 				double tap = 0, held = 0;
