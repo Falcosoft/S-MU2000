@@ -249,11 +249,17 @@ struct engine {
 		const bool limit = limit_output.load(std::memory_order_relaxed);
 		if (!limit) m_limiter.reset();
 
+		const float ad_gain = br.ad_gain();
 		for (u32 i = 0; i < n; i++) {
 			s32 l = 0, r = 0;
 			if (ain) {
 				s32 a1, a2;
 				ain->pop(a1, a2);
+				// パネルの A/D INPUT のつまみ（等倍のときは触らない）
+				if (ad_gain != 1.0f) {
+					a1 = bridge::ad_scaled(a1, ad_gain);
+					a2 = bridge::ad_scaled(a2, ad_gain);
+				}
 				mu.set_audio_input(a1, a2);
 			}
 			mu.run_sample(l, r);

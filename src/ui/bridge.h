@@ -112,6 +112,24 @@ public:
 	void set_gain(float g) { m_gain.store(g, std::memory_order_relaxed); }
 	float gain() const     { return m_gain.load(std::memory_order_relaxed); }
 
+	// パネルの A/D INPUT のつまみ（0〜1）。A/D INPUT に入る音を、音源に渡す手前で大きく・小さくする
+	// （実機では A/D 変換の手前のアナログのつまみ。issue #191）。既定の位置 AD_KNOB_DEFAULT が等倍で、
+	// 左いっぱいで無音、右いっぱいで約 +14dB。掛けるのは ad_gain()（つまみの位置の 2 乗に比例）
+	static constexpr float AD_KNOB_DEFAULT = 0.45f;
+	void set_ad_knob(float k) { m_ad_knob.store(k < 0 ? 0 : k > 1 ? 1 : k, std::memory_order_relaxed); }
+	float ad_knob() const     { return m_ad_knob.load(std::memory_order_relaxed); }
+	float ad_gain() const
+	{
+		const float k = ad_knob() / AD_KNOB_DEFAULT;
+		return k * k;
+	}
+	// つまみを掛けた A/D INPUT の 1 サンプル。A/D 変換と同じく 16bit で頭打ちにする
+	static int ad_scaled(int v, float gain)
+	{
+		const float x = float(v) * gain;
+		return x > 32767.0f ? 32767 : x < -32768.0f ? -32768 : int(x);
+	}
+
 	// 音声の処理にかかっている CPU（1 回の締め切りに対する割合、%）。音声を自分で回している
 	// gui が書き、PC の窓が読んで出す。プラグインのようにホストが回すときは書かない（負のまま）
 	void set_cpu(float percent) { m_cpu.store(percent, std::memory_order_relaxed); }
@@ -542,6 +560,7 @@ private:
 	std::atomic<u64>      m_buttons{0};
 	std::atomic<int>      m_wheel{0};
 	std::atomic<float>    m_gain{1.0f};
+	std::atomic<float>    m_ad_knob{AD_KNOB_DEFAULT};
 	std::atomic<float>    m_cpu{-1.0f};
 	std::atomic<int>      m_engine{-1};
 	std::atomic<unsigned> m_seq{0};

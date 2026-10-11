@@ -339,11 +339,12 @@ bool panel::drag(int x, int y, bridge &br)
 		return true;
 	}
 	if (m_held->kind == spot_kind::adgain) {
-		// 音量つまみと同じ動かし方。まだ音には効かせない
+		// 音量つまみと同じ動かし方。A/D INPUT に入る音の大きさに効く（bridge::ad_gain）
 		const int dx = x - m_drag_x, dy = m_drag_y - y;
 		const int span = std::max(1L, m_held->r.right - m_held->r.left);
 		const int move = (std::abs(dy) > std::abs(dx)) ? dy : dx;
 		m_adgain_now = std::clamp(m_drag_from / 127.0 + double(move) / span, 0.0, 1.0);
+		br.set_ad_knob(float(m_adgain_now));
 		return true;
 	}
 	if (m_held->kind == spot_kind::knob) {
@@ -417,6 +418,7 @@ bool panel::wheel_at(int x, int y, int delta, bridge &br)
 	}
 	if (sp && sp->kind == spot_kind::adgain) {
 		m_adgain_now = std::clamp(m_adgain_now + delta * 0.02, 0.0, 1.0);
+		br.set_ad_knob(float(m_adgain_now));
 		return true;
 	}
 	if (sp && sp->kind == spot_kind::knob) {

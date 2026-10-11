@@ -1296,7 +1296,7 @@ void panel::draw_wheel(ImDrawList *dl, int angle) const
 	         std::max(1, int(m_scale)));
 }
 
-// A/D INPUT のつまみ。panel.txt に adgain があるときだけ。回るだけで、まだ何にも効かない
+// A/D INPUT のつまみ。panel.txt に adgain があるときだけ。A/D INPUT に入る音の大きさ（bridge::ad_gain）
 void panel::draw_adgain(ImDrawList *dl) const
 {
 	if (m_lay.adgain[2] <= 0 || !m_lay.adgain_art)

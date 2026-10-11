@@ -248,6 +248,7 @@ public:
 		else
 			std::snprintf(status, sizeof(status), "%s", UI_TEXT(status_booting, "Starting..."));
 		panel.set_volume(br.gain());
+		panel.set_adgain(br.ad_knob());
 		panel.paint(dl, s, pressed, status);
 		// The bar paints after the panel (the panel fills everything). It keeps
 		// the window's fixed 16 px set: it does not scale with the panel, so the
@@ -537,6 +538,7 @@ public:
 		r.audio_in  = ain_name.empty() ? ain_keep : ain_name;
 		r.card      = card_path;
 		r.volume    = br.gain();
+		r.ad_knob   = br.ad_knob();
 		r.fold34    = play.fold_extra_ports();
 		r.thin_bends = play.thin_bends();
 		r.analog    = eng && eng->analog.load();
@@ -1383,6 +1385,7 @@ public:
 			// The VOLUME knob starts where it was left
 			remembered r = load_remembered(settings_path(), !keep_settings);
 			br.set_gain(r.volume);
+			br.set_ad_knob(r.ad_knob);
 			if (eng) {
 				eng->analog.store(r.analog);
 				eng->limit_output.store(r.limiter);

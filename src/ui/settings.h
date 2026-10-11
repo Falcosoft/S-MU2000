@@ -50,6 +50,7 @@ inline constexpr const char *const SET_BOARD_FC[7] = { "board_fc", "board_fc2", 
 inline constexpr const char *SET_BOARD_FC_CC = "board_fc_cc";
 inline constexpr const char *SET_BOARD_FM = "board_fm";       // FM ボードの音色の組のファイル（道。src/ui/fm_banks.h。無ければ初期の音色）
 inline constexpr const char *SET_VOLUME = "volume";
+inline constexpr const char *SET_AD_KNOB = "ad_knob";   // the panel's A/D INPUT knob, 0-1
 inline constexpr const char *SET_EDIT_OUT = "edit_out";   // 音色の窓の送り先（空はパネルの設定）
 
 // The whole file as key/value pairs, in file order.
@@ -114,6 +115,7 @@ struct remembered {
 	int native_fx = 0, native_engine = 0;
 	std::string card;
 	float volume = 1.0f;  // the panel's VOLUME knob
+	float ad_knob = 0.45f; // the panel's A/D INPUT knob (bridge::AD_KNOB_DEFAULT is unity)
 	bool fold34 = true;   // ports34=fold (MIDI file ports 3+4 onto A+B)
 	bool thin_bends = false; // thin_bends=1 (the player thins dense pitch bends)
 	bool analog = false;  // output=analog (DC removed)
@@ -180,6 +182,8 @@ inline settings_map collect_settings(const remembered &r)
 	char vol[32];
 	std::snprintf(vol, sizeof(vol), "%.3f", r.volume);
 	kv.emplace_back(SET_VOLUME, vol);
+	std::snprintf(vol, sizeof(vol), "%.3f", r.ad_knob);
+	kv.emplace_back(SET_AD_KNOB, vol);
 	kv.emplace_back(SET_PORTS34, r.fold34 ? "fold" : "drop");
 	kv.emplace_back(SET_THIN_BENDS, r.thin_bends ? "1" : "0");
 	kv.emplace_back(SET_OUTPUT, r.analog ? "analog" : "digital");
@@ -294,6 +298,10 @@ inline void apply_settings(const settings_map &kv, remembered &r)
 	if (const std::string *v = find_setting(kv, SET_VOLUME)) {
 		if (!v->empty())
 			r.volume = std::clamp(float(std::atof(v->c_str())), 0.0f, 1.0f);
+	}
+	if (const std::string *v = find_setting(kv, SET_AD_KNOB)) {
+		if (!v->empty())
+			r.ad_knob = std::clamp(float(std::atof(v->c_str())), 0.0f, 1.0f);
 	}
 }
 
