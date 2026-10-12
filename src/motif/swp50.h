@@ -36,6 +36,7 @@ public:
 		WAVE_DATA     = 0x2e7e,
 		KON_MASK      = 0x407e,   // 0x407E-0x467F の 8 語。0x467F = ボイス 0-15、0x467E = 16-31、0x447F = 32-47、0x447E = 48-63
 		KON_TRIGGER   = 0x487e,   // 0x8000・0x9000・0x8800（チップの型で変わる）
+		TRIGGER_ACK   = 0x587e,   // bit 15 = r | 0x80 の側へ書いた引き金を受け取った（発音開始と、力ずくで止める手順が待つ）
 		BATCH_COMMIT  = 0x4a7e,   // 0x8000 = ボイス、0x4000 = エフェクト
 		READBACK_CMD  = 0x5c7e,   // 種類 | スロット番号 を書く。読むと bit 15 = 用意ができた
 		READBACK_DATA = 0x5c7f,
@@ -82,6 +83,7 @@ public:
 		case BATCH_BUSY:    return 0;                           // いつも済んでいる
 		case SAMPLE_COUNT:  return uint16_t(m_samples);
 		case WAVE_STATUS:   return wave_status_ready;
+		case TRIGGER_ACK:   return m_reg[w] | 0x8000;           // すぐ受け取ったことにする
 		case READBACK_CMD:  return m_reg[w] | 0x8000;           // すぐ用意ができる
 		case READBACK_DATA: return readback();
 		case FX_STATUS:     return 0;                           // 処理中の旗はいつも落ちている
@@ -215,6 +217,8 @@ public:
 	uint32_t unit_source(uint32_t u) const { return reg(u, 0x2c) & 0x3f; }
 	uint32_t unit_level_l(uint32_t u) const { return reg(u, 0x1f) >> 8; }
 	uint32_t unit_level_r(uint32_t u) const { return reg(u, 0x1f) & 0xff; }
+	uint16_t unit_osc_rate(uint32_t u) const { return reg(u, 0x58); }                    // ユニットの発振器（検査の 1kHz はこれで鳴らす）
+	uint16_t unit_osc_shape(uint32_t u) const { return reg(u, 0x59); }
 	uint32_t output_line(uint32_t u) const { return reg(u, 0x2d) & 0x3f; }               // ユニット 0-5 が出口 3 組（見立て）
 	const std::vector<uint16_t> &abus_sends() const { return m_abus_send; }
 	static uint32_t abus_send_line(uint16_t e) { return e & 0x3f; }

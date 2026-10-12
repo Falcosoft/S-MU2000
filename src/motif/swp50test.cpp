@@ -112,6 +112,11 @@ int main()
 	CHECK(s.abus_sends().size() == 1);
 	CHECK(swp50_device::abus_send_line(s.abus_sends()[0]) == 0x12);
 
+	// ボイスを力ずくで止める手順: r = 0x90 に 0x8000、0x587E の bit 15 を待つ
+	s.write(0x45 << 9 | 0x90, 0x8000);
+	s.write(0x05 << 9 | 0x90, 0x8000);
+	CHECK(s.read(swp50_device::TRIGGER_ACK) & 0x8000);
+
 	// 数え
 	const uint16_t c0 = s.read(swp50_device::SAMPLE_COUNT);
 	s.tick();
