@@ -25,6 +25,8 @@ class swp50_device
 public:
 	// 制御レジスタの語番地（文書の表と同じ並び）
 	enum : uint32_t {
+		GLOBAL_MODE   = 0x007e,   // 検査は両方のチップに 0xA0A8 を書く（中身は未読）
+		CHIP_ROLE     = 0x027e,   // 検査はマスターに 0x1000、スレーブに 0x2080 を書く（役目の設定と見ている）
 		BATCH_BUSY    = 0x187e,   // bit 0 = まとめ書きの処理中
 		SAMPLE_COUNT  = 0x1c7e,   // サンプルごとに進む数え（らしい）
 		WAVE_CMD      = 0x207e,   // 0xC000 読み / 0x8000 書き / 0xD000 まとめ読み / 0 終わり
