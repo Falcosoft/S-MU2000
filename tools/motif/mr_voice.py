@@ -7,6 +7,10 @@
   41 ee 20（30 バイト）: 00 エレメントの音量、04-07 AEG の時間（アタック・ディケイ 1・ディケイ 2・リリース）、
                          08-0B AEG の高さ（初め・アタック・ディケイ 1・ディケイ 2）
   40 70 00（82 バイト）: 頭の 10 文字が音色の名前
+--drum を付けると、ドラムボイス（mm = 20・21・28）を鍵ごとの表にする。
+  47 kk 00（19 バイト）: 00 スイッチ、01 波形の種類（0 = プリセットの波形、1 = ボイス）、06-07 波形番号、0C パン
+  47 kk 20（12 バイト）: 00 音量。kk = 0-72 が C0-C6（MIDI の 24-96）
+  46 70 00: 頭の 10 文字が名前
 ファイルの名前は <mm>_<nn>.syx（mm = バルクのヘッダの番地の 2 バイトめ、nn = 音色の番号）。"""
 import csv
 import os
@@ -42,9 +46,39 @@ def voice(path):
     return name, els
 
 
+DRUM_BANKS = {0x20: "DR-PRE", 0x21: "DR-GM", 0x28: "DR-USR", 0x2F: "DR-EDIT"}
+
+
+def drum_main(d, out, waves):
+    wr = csv.writer(out, lineterminator="\n")
+    wr.writerow(["bank", "number", "name", "note", "switch", "wave_type", "wave", "wave_name", "pan", "level"])
+    n = 0
+    for f in sorted(os.listdir(d)):
+        if not f.endswith(".syx"):
+            continue
+        mm, nn = int(f[:2], 16), int(f[3:6])
+        if mm not in DRUM_BANKS:
+            continue
+        b = blocks(os.path.join(d, f))
+        name = bytes(b.get((0x46, 0x70, 0x00), b"")[:10]).decode("ascii", "replace").rstrip()
+        n += 1
+        for kk in range(73):
+            o = b.get((0x47, kk, 0x00))
+            a = b.get((0x47, kk, 0x20))
+            if o is None or a is None:
+                continue
+            w = o[6] << 7 | o[7]
+            wr.writerow([DRUM_BANKS[mm], nn + 1, name, 24 + kk, o[0], o[1], w,
+                         waves.get(w, "") if o[1] == 0 else "", o[0x0C], a[0]])
+    print("# %d ドラムボイス" % n, file=sys.stderr)
+
+
 def main():
     a = sys.argv[1:]
     out = sys.stdout
+    drum = "--drum" in a
+    if drum:
+        a.remove("--drum")
     waves = {}
     if "--waves" in a:
         i = a.index("--waves")
@@ -56,6 +90,9 @@ def main():
         out = open(a[i + 1], "w", encoding="utf-8", newline="\n")
         del a[i:i + 2]
     d = a[0]
+    if drum:
+        drum_main(d, out, waves)
+        return
     wr = csv.writer(out, lineterminator="\n")
     wr.writerow(["bank", "number", "name", "element", "switch", "wave", "wave_name", "pan", "note_lo", "note_hi",
                  "vel_lo", "vel_hi", "level", "aeg_attack", "aeg_decay1", "aeg_decay2", "aeg_release",

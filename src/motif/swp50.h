@@ -16,6 +16,7 @@
 #ifndef SMU2000_MOTIF_SWP50_H
 #define SMU2000_MOTIF_SWP50_H
 
+#include <cmath>
 #include <cstdint>
 #include <functional>
 #include <vector>
@@ -172,6 +173,12 @@ public:
 			break;
 		}
 	}
+
+	// ---- 目盛り（2026-10-13 に実機の録音で確かめたもの。doc/motif-rack-es-capture.md）----
+
+	// 減らす量（送りの量、EG の高さ）→ 倍率。0x10 = 6.02dB、0 = そのまま、0xFF = 切る
+	static double atten_to_gain(uint32_t a) { return a >= 0xff ? 0.0 : std::pow(2.0, -double(a) / 16.0); }
+	static double atten_to_db(uint32_t a) { return -double(a) * (20.0 * 0.30102999566398120 / 16.0); }
 
 	// ---- 書かれた値を、意味ごとに取り出す口 ----
 

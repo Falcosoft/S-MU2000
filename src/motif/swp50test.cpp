@@ -6,6 +6,7 @@
 
 #include "swp50.h"
 
+#include <cmath>
 #include <cstdio>
 
 static int g_fail = 0;
@@ -121,6 +122,11 @@ int main()
 	s.write(0x45 << 9 | 0x90, 0x8000);
 	s.write(0x05 << 9 | 0x90, 0x8000);
 	CHECK(s.read(swp50_device::TRIGGER_ACK) & 0x8000);
+
+	// 目盛り: 0x10 で半分（6.02dB）、0x20 で 12.04dB（実機で音量 2 → 1 が 12.04dB だった）
+	CHECK(std::fabs(swp50_device::atten_to_gain(0x10) - 0.5) < 1e-12);
+	CHECK(std::fabs(swp50_device::atten_to_db(0x20) + 12.0412) < 1e-3);
+	CHECK(swp50_device::atten_to_gain(0xff) == 0.0);
 
 	// 数え
 	const uint16_t c0 = s.read(swp50_device::SAMPLE_COUNT);
