@@ -217,7 +217,7 @@ public:
 	uint32_t unit_source(uint32_t u) const { return reg(u, 0x2c) & 0x3f; }
 	uint32_t unit_level_l(uint32_t u) const { return reg(u, 0x1f) >> 8; }
 	uint32_t unit_level_r(uint32_t u) const { return reg(u, 0x1f) & 0xff; }
-	uint16_t unit_osc_rate(uint32_t u) const { return reg(u, 0x58); }                    // ユニットの発振器（検査の 1kHz はこれで鳴らす）
+	uint16_t unit_osc_rate(uint32_t u) const { return reg(u, 0x58); }                    // ユニットの発振器（検査の領域の音出しの関数が使う。目盛りは未確認）
 	uint16_t unit_osc_shape(uint32_t u) const { return reg(u, 0x59); }
 	uint32_t output_line(uint32_t u) const { return reg(u, 0x2d) & 0x3f; }               // ユニット 0-5 が出口 3 組（見立て）
 	const std::vector<uint16_t> &abus_sends() const { return m_abus_send; }
