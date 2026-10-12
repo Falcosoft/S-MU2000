@@ -10,6 +10,7 @@
 // REC の InputSrc（AD2 / AD1+2）で録るものが変わるかを見る。
 // 食い違えば 1 を返す。
 #include "mu2000.h"
+#include "harm_analyze.h"
 #include "ui/bridge.h"
 #include "ui/driver.h"
 #include "wav_in.h"
@@ -3210,6 +3211,68 @@ static smu2000::voicelib::item g_lib_item;      // ライブラリの確かめ�
 				run(44100, 0, dp, bad);
 				const double cost = std::chrono::duration<double>(std::chrono::steady_clock::now() - t0).count();
 
+				// 聞かせて真似させる（src/harm_analyze.h）。音源で鳴らした音を録ったつもりで測り直す:
+				//   ・倍音 1・2・3・5・8 本目だけの音色を鍵 57（220Hz）で 1.5 秒 → 高さ、伸ばしている音だということ、倍音の大きさが元に戻る
+				//   ・測った音色を組に入れて鳴らすと、5 倍と基音の比が元と同じ
+				//   ・鐘（ずれ 0.95）→ ずれの量が出て、消えていく音だと分かる
+				//   ・無音と、短すぎる音は断る
+				bool an_ok = false, an_bell = false, an_refuse = false;
+				double an_f0 = 0, an_worst = 0, an_ratio = 0, an_inharm = 0;
+				double an_bell_f0 = 0;
+				bool an_bell_sus = false;
+				{
+					auto mine = std::make_shared<vb::harm_bank>();
+					vb::harm_voice src;
+					std::snprintf(src.name, sizeof(src.name), "SOURCE  ");
+					const float want[vb::HARM_PARTIALS] = { 1.0f, 0.5f, 0.25f, 0.0f, 0.6f, 0.0f, 0.0f, 0.1f };
+					for (int f = 0; f < vb::HARM_FRAMES; f++)
+						std::copy(want, want + vb::HARM_PARTIALS, src.amp[f]);
+					src.bright = 0.0f;
+					src.attack = 0.02f;
+					mine->prog[0] = src;
+					auto record = [&](int prog, int key, double hold, double tail) {
+						syn.reset();
+						syn.midi(0xc0, u8(prog), 0);
+						syn.midi(0x90, u8(key), 127);
+						std::vector<double> a = run(int(hold * 44100), 0, dp, bad);
+						syn.midi(0x80, u8(key), 0);
+						const std::vector<double> b = run(int(tail * 44100), 0, dp, bad);
+						a.insert(a.end(), b.begin(), b.end());
+						return std::vector<float>(a.begin(), a.end());
+					};
+					syn.set_bank(mine);
+					const std::vector<float> rec = record(0, 57, 1.5, 0.4);
+					vb::harm_analysis an;
+					std::string aerr;
+					if (vb::harm_analyze(rec.data(), rec.size(), 44100.0, an, aerr)) {
+						an_f0 = an.f0;
+						for (int h = 0; h < vb::HARM_PARTIALS; h++)
+							an_worst = std::max(an_worst, double(std::fabs(an.voice.amp[2][h] - want[h])));
+						// 測った音色で鳴らし直す
+						an.voice.bright = 0.0f;
+						mine->prog[1] = an.voice;
+						syn.set_bank(mine);
+						const std::vector<double> again = held(1, 57, 127, 22050, 8820);
+						an_ratio = tone(again, 1100) / std::max(1e-12, tone(again, 220));
+						an_ok = std::fabs(an.f0 - 220.0) < 0.5 && an.key == 57 && an.sustained && an_worst < 0.03 &&
+						        an.voice.inharm == 0.0f && an_ratio > 0.55 && an_ratio < 0.65;
+					}
+					syn.set_bank(nullptr);
+					const std::vector<float> brec = record(8, 69, 3.0, 0.1);
+					vb::harm_analysis ab;
+					if (vb::harm_analyze(brec.data(), brec.size(), 44100.0, ab, aerr)) {
+						an_inharm = ab.voice.inharm;
+						an_bell_f0 = ab.f0;
+						an_bell_sus = ab.sustained;
+						an_bell = std::fabs(ab.voice.inharm - 0.95f) < 0.1f && !ab.sustained && std::fabs(ab.f0 - 440.0) < 2.0;
+					}
+					const std::vector<float> hush(44100, 0.0f);
+					const std::vector<float> blip(rec.begin(), rec.begin() + 2000);
+					vb::harm_analysis ax;
+					an_refuse = !vb::harm_analyze(hush.data(), hush.size(), 44100.0, ax, aerr) &&
+					            !vb::harm_analyze(blip.data(), blip.size(), 44100.0, ax, aerr);
+				}
+
 				static rig hr;
 				if (!hr.mu.load_program(dir + "/mu2000_flash.bin") || !hr.mu.load_wave(dir + "/dump"))
 					return 1;
@@ -3255,7 +3318,7 @@ static smu2000::voicelib::item g_lib_item;      // ライブラリの確かめ�
 				      b2 > 890 && bell_at > 0.003 && bell_exact < 0.3 * bell_at &&
 				      t_late > 3.0 * t_early && t_late > 2.0 * t_soft && m0 > 0.05 && m1 < 0.2 * m0 &&
 				      kick > 0.01 && open_ring > 0.003 && choked < 0.5 * open_ring &&
-				      th3 > 0.01 && th1 < 0.01 * th3 && h_same && h_cut &&
+				      th3 > 0.01 && th1 < 0.01 * th3 && h_same && h_cut && an_ok && an_bell && an_refuse &&
 				      known && list.find("HARMONIC") != std::string::npos && o440 > 0.01 && o880 > 0.4 * o440 && o880 < 0.6 * o440 &&
 				      rms(quiet) < 0.002 * rms(lead) && rms(hkick) > 0.003 && bv.size() == 129,
 				      "ハーモニックボード: 倍音を足して鳴らす。口 E の 16 パートのボードとして挿さる",
@@ -3271,7 +3334,9 @@ static smu2000::voicelib::item g_lib_item;      // ライブラリの確かめ�
 				      " [" + list + "] 口 E ののこぎり 440Hz " + std::to_string(o440) + "（880Hz " + std::to_string(o880) + "）、音量 0 で " +
 				      std::to_string(rms(quiet) / std::max(1e-12, rms(lead))) + " 倍、口 E のキック " + std::to_string(rms(hkick)) + "、音色の並び " +
 				      std::to_string(bv.size()) + "、重さ: 倍音 " + std::to_string(busy) + " 本（32 声）の 1 秒ぶんに " + std::to_string(cost) +
-				      " 秒、4 和音でいちばん多い音色 " + std::to_string(heaviest) + " 本");
+				      " 秒、4 和音でいちばん多い音色 " + std::to_string(heaviest) + " 本、測り直し: 基音 " + std::to_string(an_f0) + "Hz、倍音のいちばん大きい違い " + std::to_string(an_worst) +
+				      "、鳴らし直した 5 倍 / 基音 " + std::to_string(an_ratio) + (an_ok ? "" : "（NG）") + "、鐘のずれ " + std::to_string(an_inharm) + "（基音 " + std::to_string(an_bell_f0) + "Hz、" + (an_bell_sus ? "伸ばす音" : "消える音") + "）" +
+				      (an_bell ? "" : "（NG）") + "、無音と短い音は" + (an_refuse ? "断る" : "通る"));
 			}
 
 			// 同じ SysEx を直に読み込む（sampling_load_sysex）。「全部を消す」だけ MIDI で送って firmware に消させ、
