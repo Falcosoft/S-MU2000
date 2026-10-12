@@ -473,7 +473,8 @@ void board_panes::board_pane(bridge &br)
 	                          UI_TEXT(me_board_dls, "DLS board, 16 parts on port E") + '\0' +
 	                          UI_TEXT(me_board_user, "Your own board (waves you made)") + '\0' +
 	                          UI_TEXT(me_board_user16, "Your own board, 16 parts on port E") + '\0' +
-	                          UI_TEXT(me_board_fm16, "FM board (4-operator FM), 16 parts on port E") + '\0';
+	                          UI_TEXT(me_board_fm16, "FM board (4-operator FM), 16 parts on port E") + '\0' +
+	                          UI_TEXT(me_board_harm16, "Harmonic board (additive, 64 partials), 16 parts on port E") + '\0';
 	// 差込口は実機と同じ 3 つ（PLG-1〜3）。1 段ずつ。その下に、増設の差込口（PLG-4〜6。本体は知らない。1 パートのボードだけ）
 	const std::string extra_kinds = std::string(UI_TEXT(me_board_none, "(none)")) + '\0' + UI_TEXT(me_board_fc, "FC board (8-bit console sounds)") + '\0' +
 	                                UI_TEXT(me_board_user, "Your own board (waves you made)") + '\0';

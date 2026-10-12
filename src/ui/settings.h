@@ -188,10 +188,10 @@ inline settings_map collect_settings(const remembered &r)
 	kv.emplace_back(SET_THIN_BENDS, r.thin_bends ? "1" : "0");
 	kv.emplace_back(SET_OUTPUT, r.analog ? "analog" : "digital");
 	kv.emplace_back(SET_EDIT_OUT, r.edit_out);
-	static const char *const BOARD_KINDS[7] = { "", "fc", "fc16", "dls", "user", "user16", "fm16" };
-	kv.emplace_back(SET_BOARD, BOARD_KINDS[r.board >= 0 && r.board < 7 ? r.board : 0]);
+	static const char *const BOARD_KINDS[8] = { "", "fc", "fc16", "dls", "user", "user16", "fm16", "harm16" };
+	kv.emplace_back(SET_BOARD, BOARD_KINDS[r.board >= 0 && r.board < 8 ? r.board : 0]);
 	for (int i = 0; i < 5; i++) {
-		kv.emplace_back(SET_BOARD_MORE[i], BOARD_KINDS[r.board_more[i] >= 0 && r.board_more[i] < 7 ? r.board_more[i] : 0]);
+		kv.emplace_back(SET_BOARD_MORE[i], BOARD_KINDS[r.board_more[i] >= 0 && r.board_more[i] < 8 ? r.board_more[i] : 0]);
 		kv.emplace_back(SET_BOARD_MORE_PART[i], std::to_string(r.board_more_part[i]));
 	}
 	kv.emplace_back(SET_BOARD_DLS, r.board_dls);
@@ -276,7 +276,7 @@ inline void apply_settings(const settings_map &kv, remembered &r)
 	if (const std::string *v = find_setting(kv, SET_THIN_BENDS)) r.thin_bends = *v == "1";
 	if (const std::string *v = find_setting(kv, SET_OUTPUT))  r.analog  = *v == "analog";
 	if (const std::string *v = find_setting(kv, SET_EDIT_OUT)) r.edit_out = *v;
-	const auto board_kind = [](const std::string &v) { return v == "fc" ? 1 : v == "fc16" ? 2 : v == "dls" ? 3 : v == "user" ? 4 : v == "user16" ? 5 : v == "fm16" ? 6 : 0; };
+	const auto board_kind = [](const std::string &v) { return v == "fc" ? 1 : v == "fc16" ? 2 : v == "dls" ? 3 : v == "user" ? 4 : v == "user16" ? 5 : v == "fm16" ? 6 : v == "harm16" ? 7 : 0; };
 	if (const std::string *v = find_setting(kv, SET_BOARD))   r.board = board_kind(*v);
 	for (int i = 0; i < 5; i++) {
 		if (const std::string *v = find_setting(kv, SET_BOARD_MORE[i])) r.board_more[i] = board_kind(*v);

@@ -19,6 +19,7 @@
 #include "ui/panel_macro.h"
 #include "xg/wave_catalog.h"
 
+#include <chrono>
 #include <filesystem>
 #include <fstream>
 #include <cmath>
@@ -3082,6 +3083,195 @@ static smu2000::voicelib::item g_lib_item;      // ライブラリの確かめ�
 				      "、音色の並び " + std::to_string(bv.size()) + "、書き換え: 前 440Hz " + std::to_string(e440) + " → 押したまま比を 2 に 880Hz " +
 				      std::to_string(l880) + "（440Hz " + std::to_string(l440) + "）、組の読み戻し " + (fm_same ? "同じ" : "違う") + "、欠けたファイルは" +
 				      (fm_cut ? "断る" : "通る"));
+			}
+
+			// ハーモニックボード（VBOARD_HARM16。src/vboard_harm.h）。正弦波の倍音 64 本を足す加算合成で、口 E の 16 パート。
+			// まず音源だけで:
+			//   ・128 個のプログラムがどれも鳴り（振り切れず、数として壊れず）、離して 8 秒で全部消える
+			//   ・矩形波の音色は奇数の倍音だけ（3 倍が基音の 1/3、2 倍は無い）。のこぎり波は 2 倍が基音の半分
+			//   ・ずれ: 鐘の音色の 2 本目は、ちょうど 2 倍ではなく式どおり上へずれたところにある
+			//   ・時間で変わる: ブラスは鳴り始めより 0.1 秒後のほうが高い倍音が多い。強く弾くほど明るい
+			//   ・行き来（CC71）: パッドは相手の音色（ガラス）に 2 倍の倍音が無いので、いっぱいまで動かすと 2 倍が消える
+			//   ・ドラム（チャンネル 10）は鳴り、閉じたハイハットは開いた音を止める
+			//   ・音色の組: 書き換えて渡すと変わり、ファイルの形にして読み戻すと同じになる。欠けたファイルは断る
+			// 次に本体に挿して: firmware が見つけ、口 E のチャンネル 1 でのこぎり波（鍵 69 で 440Hz）が鳴り、音量 0 で消える
+			{
+				namespace vb = smu2000::vboard;
+				using B = mu2000::button;
+				vb::harm_synth syn;
+				auto run = [&](int samples, int ch, double &peak, bool &bad) {
+					std::vector<double> o16(size_t(samples), 0.0);
+					for (int i = 0; i < samples; i++) {
+						float o[16] = {};
+						syn.render(o);
+						const double v = o[ch];
+						if (!(v == v) || std::fabs(v) > 4.0)
+							bad = true;
+						peak = std::max(peak, std::fabs(v));
+						o16[size_t(i)] = v;
+					}
+					return o16;
+				};
+				auto rms = [](const std::vector<double> &x) {
+					double e = 0;
+					for (double v : x)
+						e += v * v;
+					return std::sqrt(e / double(std::max<size_t>(1, x.size())));
+				};
+				int silent = 0, stuck = 0, heaviest = 0;
+				bool bad = false;
+				double loudest = 0;
+				for (int prog = 0; prog < 128; prog++) {
+					syn.reset();
+					syn.midi(0xc0, u8(prog), 0);
+					for (int k : { 48, 60, 64, 67 })
+						syn.midi(0x90, u8(k), 110);
+					double peak = 0;
+					if (rms(run(4410, 0, peak, bad)) < 0.002)
+						silent++;
+					heaviest = std::max(heaviest, syn.partials_running());
+					loudest = std::max(loudest, peak);
+					for (int k : { 48, 60, 64, 67 })
+						syn.midi(0x80, u8(k), 0);
+					double dummy = 0;
+					run(44100 * 8, 0, dummy, bad);
+					if (syn.sounding())
+						stuck++;
+				}
+				double dp = 0;
+				auto held = [&](int prog, int key, int vel, int skip, int take) {
+					syn.reset();
+					syn.midi(0xc0, u8(prog), 0);
+					syn.midi(0x90, u8(key), u8(vel));
+					run(skip, 0, dp, bad);
+					return run(take, 0, dp, bad);
+				};
+				const std::vector<double> sq = held(80, 69, 127, 4410, 8820), saw = held(84, 69, 127, 4410, 8820);
+				const double sq1 = tone(sq, 440), sq2 = tone(sq, 880), sq3 = tone(sq, 1320), sw1 = tone(saw, 440), sw2 = tone(saw, 880);
+				// 鐘（プログラム 9）: ずれ 0.95 → B = 0.01 × 0.95²。2 本目は 2 × √(1 + 3B) 倍
+				const double b2 = 440.0 * vb::harm_ratio(vb::harm_default_voice(8), 2);
+				const std::vector<double> bell = held(8, 69, 127, 2205, 22050);
+				const double bell_at = tone(bell, b2), bell_exact = tone(bell, 880);
+				// ブラス（プログラム 57）: 5 倍と基音の比を、鳴り始めと 0.15 秒後、弱く弾いたときで比べる
+				const std::vector<double> br_early = held(56, 57, 127, 0, 882), br_late = held(56, 57, 127, 6615, 4410), br_soft = held(56, 57, 30, 6615, 4410);
+				const auto tilt = [&](const std::vector<double> &x) { return tone(x, 1100) / std::max(1e-12, tone(x, 220)); };
+				const double t_early = tilt(br_early), t_late = tilt(br_late), t_soft = tilt(br_soft);
+				// パッド（プログラム 89）→ CC71 でガラス（93）へ。伸ばしている間の 2 倍の倍音を見る
+				syn.reset();
+				syn.midi(0xc0, 88, 0);
+				syn.midi(0x90, 57, 127);
+				run(44100 * 5, 0, dp, bad);
+				const std::vector<double> pad0 = run(8820, 0, dp, bad);
+				syn.midi(0xb0, 71, 127);
+				run(4410, 0, dp, bad);
+				const std::vector<double> pad1 = run(8820, 0, dp, bad);
+				const double m0 = tone(pad0, 440) / std::max(1e-12, tone(pad0, 220)), m1 = tone(pad1, 440) / std::max(1e-12, tone(pad1, 220));
+				// ドラム
+				syn.reset();
+				syn.midi(0x99, 36, 120);
+				const double kick = rms(run(4410, 9, dp, bad));
+				syn.midi(0xb9, 120, 0);
+				syn.midi(0x99, 46, 120);
+				run(2205, 9, dp, bad);
+				const double open_ring = rms(run(2205, 9, dp, bad));
+				syn.midi(0xb9, 120, 0);
+				syn.midi(0x99, 46, 120);
+				run(2205, 9, dp, bad);
+				syn.midi(0x99, 42, 30);                  // 弱く閉じる: 開いた音が止まる
+				run(2205, 9, dp, bad);
+				const double choked = rms(run(2205, 9, dp, bad));
+				// 音色の組: 3 本目の倍音だけの音色をプログラム 6 に置く → 鍵 69 で 1320Hz だけが鳴る
+				auto bank = std::make_shared<vb::harm_bank>();
+				vb::harm_voice one;
+				std::snprintf(one.name, sizeof(one.name), "THIRD   ");
+				for (int f = 0; f < vb::HARM_FRAMES; f++)
+					one.amp[f][2] = 1.0f;
+				one.bright = 0.0f;
+				bank->prog[5] = one;
+				syn.reset();
+				syn.set_bank(bank);
+				const std::vector<double> third = held(5, 69, 127, 2205, 8820);
+				const double th1 = tone(third, 440), th3 = tone(third, 1320);
+				const std::vector<u8> hbytes = vb::write_harm_bank(*bank);
+				std::string herr;
+				const auto hback = vb::read_harm_bank(hbytes.data(), hbytes.size(), herr);
+				const bool h_same = hback && vb::write_harm_bank(*hback) == hbytes && std::string(hback->prog[5].name) == "THIRD   " &&
+				                    hback->prog[88].morph_to == 92;
+				const bool h_cut = !vb::read_harm_bank(hbytes.data(), hbytes.size() - 50, herr);
+				syn.set_bank(nullptr);
+				// 重さ: のこぎり波を 32 声（倍音はどれも聞こえる高さまで）。1 秒ぶんを作るのにかかった時間
+				syn.reset();
+				syn.midi(0xc0, 84, 0);
+				for (int k = 0; k < 32; k++)
+					syn.midi(0x90, u8(36 + k), 100);
+				run(4410, 0, dp, bad);
+				const int busy = syn.partials_running();
+				const auto t0 = std::chrono::steady_clock::now();
+				run(44100, 0, dp, bad);
+				const double cost = std::chrono::duration<double>(std::chrono::steady_clock::now() - t0).count();
+
+				static rig hr;
+				if (!hr.mu.load_program(dir + "/mu2000_flash.bin") || !hr.mu.load_wave(dir + "/dump"))
+					return 1;
+				hr.mu.load_sintab(dir + "/standin/sin-table.bin");
+				hr.mu.set_virtual_board(mu2000::VBOARD_HARM16, 0);
+				hr.mu.reset();
+				for (u32 i = 0; i < 30 * RATE && !hr.mu.midi_ready(); i += RATE / 100)
+					hr.pump(10);
+				hr.pump(3000);
+				const bool known = hr.mu.virtual_board_known();
+				auto send = [&](std::initializer_list<int> msg) {
+					for (int x : msg)
+						hr.mu.midi_in(u8(x), 0);
+				};
+				auto play = [&](int ch, int key) {
+					hr.pump(300);
+					hr.out.clear();
+					hr.collect = true;
+					send({ 0x90 | ch, key, 127 });
+					hr.pump(300);
+					hr.collect = false;
+					send({ 0x80 | ch, key, 0 });
+					std::vector<double> o = hr.out;
+					hr.pump(600);
+					return o;
+				};
+				send({ 0xf5, 5, 0xb0, 91, 0, 0xb9, 91, 0, 0xc0, 84 });      // 口 E へ。チャンネル 1 はのこぎり波
+				const std::vector<double> lead = play(0, 69);
+				const double o440 = tone(lead, 440), o880 = tone(lead, 880);
+				send({ 0xb0, 7, 0 });
+				const std::vector<double> quiet = play(0, 69);
+				send({ 0xb0, 7, 100 });
+				const std::vector<double> hkick = play(9, 36);
+				const std::vector<mu2000::board_voice> bv = hr.mu.board_voices();
+				send({ 0xf5, 1 });
+				hr.press(B::util, 150);
+				for (int i = 0; i < 6; i++)
+					hr.press(B::select_right, 150);
+				hr.press(B::enter, 150);
+				const std::string list = hr.lcd();
+				check(!silent && !stuck && !bad && loudest < 1.5 &&
+				      sq1 > 0.01 && sq2 < 0.01 * sq1 && sq3 > 0.28 * sq1 && sq3 < 0.38 * sq1 && sw2 > 0.45 * sw1 && sw2 < 0.55 * sw1 &&
+				      b2 > 890 && bell_at > 0.003 && bell_exact < 0.3 * bell_at &&
+				      t_late > 3.0 * t_early && t_late > 2.0 * t_soft && m0 > 0.05 && m1 < 0.2 * m0 &&
+				      kick > 0.01 && open_ring > 0.003 && choked < 0.5 * open_ring &&
+				      th3 > 0.01 && th1 < 0.01 * th3 && h_same && h_cut &&
+				      known && list.find("HARMONIC") != std::string::npos && o440 > 0.01 && o880 > 0.4 * o440 && o880 < 0.6 * o440 &&
+				      rms(quiet) < 0.002 * rms(lead) && rms(hkick) > 0.003 && bv.size() == 129,
+				      "ハーモニックボード: 倍音を足して鳴らす。口 E の 16 パートのボードとして挿さる",
+				      "鳴らないプログラム " + std::to_string(silent) + "、消えないプログラム " + std::to_string(stuck) +
+				      (bad ? "、壊れた値あり" : "") + "、いちばん大きい山 " + std::to_string(loudest) + "、矩形 1:2:3 倍 = " + std::to_string(sq1) + " " +
+				      std::to_string(sq2) + " " + std::to_string(sq3) + "、のこぎり 2 倍 / 基音 " + std::to_string(sw2 / std::max(1e-12, sw1)) +
+				      "、鐘の 2 本目 " + std::to_string(b2) + "Hz に " + std::to_string(bell_at) + "（880Hz に " + std::to_string(bell_exact) +
+				      "）、ブラスの 5 倍 / 基音: 鳴り始め " + std::to_string(t_early) + " → 0.15 秒後 " + std::to_string(t_late) + "、弱く " +
+				      std::to_string(t_soft) + "、行き来: 2 倍 / 基音 " + std::to_string(m0) + " → " + std::to_string(m1) + "、キック " +
+				      std::to_string(kick) + "、開いたハイハット " + std::to_string(open_ring) + " → 閉じて " + std::to_string(choked) +
+				      "、3 本目だけの音色 1320Hz " + std::to_string(th3) + "（440Hz " + std::to_string(th1) + "）、組の読み戻し " +
+				      (h_same ? "同じ" : "違う") + "、欠けたファイルは" + (h_cut ? "断る" : "通る") + "、見つけた " + (known ? "はい" : "いいえ") +
+				      " [" + list + "] 口 E ののこぎり 440Hz " + std::to_string(o440) + "（880Hz " + std::to_string(o880) + "）、音量 0 で " +
+				      std::to_string(rms(quiet) / std::max(1e-12, rms(lead))) + " 倍、口 E のキック " + std::to_string(rms(hkick)) + "、音色の並び " +
+				      std::to_string(bv.size()) + "、重さ: 倍音 " + std::to_string(busy) + " 本（32 声）の 1 秒ぶんに " + std::to_string(cost) +
+				      " 秒、4 和音でいちばん多い音色 " + std::to_string(heaviest) + " 本");
 			}
 
 			// 同じ SysEx を直に読み込む（sampling_load_sysex）。「全部を消す」だけ MIDI で送って firmware に消させ、
