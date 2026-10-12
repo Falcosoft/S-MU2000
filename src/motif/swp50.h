@@ -212,6 +212,9 @@ public:
 	uint32_t send_target(uint32_t n, int k) const { return reg(n, 0x20 + k * 2) >> 8; }
 	uint32_t send_kind(uint32_t n, int k) const { return (reg(n, 0x21 + k * 2) >> 8) & 3; }
 	uint32_t send_atten(uint32_t n, int k) const { return reg(n, 0x21 + k * 2) & 0xff; }
+	// EG（k = 0-3: アタック・ディケイ 1・ディケイ 2・リリース）。速さは 7bit の番号で、8 目盛りで時間が半分（表 8C0DDA08）
+	uint32_t eg_rate(uint32_t n, int k) const { return (reg(n, 0x11 + k) >> 8) & 0x7f; }
+	uint32_t eg_level(uint32_t n, int k) const { return reg(n, 0x11 + k) & 0xff; }
 	bool     released(uint32_t n) const { return reg(n, 0x14) & 0x8000; }   // リリースへ進む合図
 
 	// つなぎ替え
