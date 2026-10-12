@@ -1526,10 +1526,15 @@ void part_shapes::draw(xg::model &m, const xg_snapshot &ram, bridge &br)
 			if (bkind == mu2000::VBOARD_FM16 && !bp.drum) {
 				// FM ボードのメロディの音色は、ここで中身を触れる
 				m_fm_edit.draw(bp.program, br);
+			} else if (bkind == mu2000::VBOARD_HARM16 && !bp.drum) {
+				// ハーモニックボードのメロディの音色も
+				m_harm_edit.draw(bp.program, br);
 			} else if (bkind == mu2000::VBOARD_FC16) {
 				// FC ボードの音色も（1 パートの FC ボードと同じ組）
 				m_single.edit_fc_voice(bp.program, br, bch);
 			} else {
+				if (bkind == mu2000::VBOARD_HARM16)
+					ImGui::TextWrapped("%s", UI_TEXT(hme_drum_note, "This channel plays the harmonic board's drums. The drum sounds are fixed; pick a melodic voice on the left to edit its sound here."));
 				if (bkind == mu2000::VBOARD_FM16)
 					ImGui::TextWrapped("%s", UI_TEXT(fme_drum_note, "This channel plays the FM board's drums. The drum sounds are fixed; pick a melodic voice on the left to edit its sound here."));
 				ImGui::TextWrapped("%s", UI_TEXT(ps_board_note, "This is a channel of the plug-in board on port E, not one of the MU's parts. Pick its voice on the left. In the row above, drag the bars for volume, expression, pan, pitch bend, modulation and the variation / chorus / reverb sends; click INS to send the channel through an insertion effect; press the keys to play it, or play from the PC keyboard. Right-click keys to mark them: marked keys sound for a second each time you pick a voice.\n\nThe vibrato, filter, envelope and EQ pictures belong to the MU's own tone generator, so there are none for a board channel."));

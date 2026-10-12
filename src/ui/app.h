@@ -67,6 +67,7 @@
 #include "ui/user_boards.h"
 #include "ui/fc_banks.h"
 #include "ui/fm_banks.h"
+#include "ui/harm_banks.h"
 
 #include "nvram.h"
 #include "smartmedia.h"
@@ -555,6 +556,8 @@ public:
 		r.board_file = user_boards::current_path();
 		fm_banks::save(br);
 		r.board_fm = fm_banks::current_path();
+		harm_banks::save(br);
+		r.board_harm = harm_banks::current_path();
 		fc_banks::save_all(br);
 		for (int i = 0; i < fc_banks::TARGETS; i++)
 			r.board_fc[i] = fc_banks::current_path(i);
@@ -1428,6 +1431,13 @@ public:
 					eng->mu.set_fm_bank(b, r.board_fm);
 				else
 					std::fprintf(stderr, CLI_T("FM voice set: %s (%s)\n", "FM ボードの音色の組: %s（%s）\n"), err.c_str(), r.board_fm.c_str());
+			}
+			if (eng && !r.board_harm.empty()) {
+				std::string err;
+				if (const auto b = harm_banks::adopt(r.board_harm, err))
+					eng->mu.set_harm_bank(b, r.board_harm);
+				else
+					std::fprintf(stderr, CLI_T("Harmonic voice set: %s (%s)\n", "ハーモニックボードの音色の組: %s（%s）\n"), err.c_str(), r.board_harm.c_str());
 			}
 			if (eng && r.board)
 				eng->mu.set_virtual_board(r.board, r.board_part - 1);

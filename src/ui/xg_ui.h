@@ -192,6 +192,10 @@ file_ask take_file_ask(std::vector<u8> &bytes);     // 持ち主が取る（save
 void give_opened_file(std::vector<u8> bytes);       // 持ち主が、読んだ中身を返す
 bool take_opened_file(std::vector<u8> &bytes);      // 頼んだ側が受け取る（1 回だけ）
 bool take_opened_wav(std::vector<u8> &bytes);       // WAV を頼んだ側が受け取る
+// WAV を頼む窓が 2 つ以上あるので、誰が頼んだかを付けられる（0 = サンプリングの窓 = 上の 2 つ）。頼んだ本人だけが受け取る
+enum { WAV_FOR_SAMPLING = 0, WAV_FOR_HARMONIC = 1 };
+void ask_open_wav_for(int who);
+bool take_opened_wav_for(int who, std::vector<u8> &bytes);
 // SmartMedia の画像（サンプリングの窓の「カード」）。中身は読まず、選ばれた場所（UTF-8）だけを返す
 void ask_open_card();
 // MIDI ファイル（何曲でも）。プレイヤーの窓が頼み、道の並びを受け取る。窓を出せる持ち主だけ midi_dialog が真

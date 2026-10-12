@@ -16,6 +16,7 @@
 #pragma once
 
 #include "fm_voice_editor.h"
+#include "harm_voice_editor.h"
 #include "overview.h"
 #include "single_board_pane.h"
 #include "xg_ui.h"
@@ -54,6 +55,7 @@ private:
 	overview m_strip;
 	// FM ボードのチャンネルを出しているときの、右の面の音色エディタ
 	fm_voice_editor m_fm_edit;
+	harm_voice_editor m_harm_edit;      // 同じく、ハーモニックボードのチャンネルのとき
 	// 1 パートのボード（FC・オリジナル）が借りているパートを出しているときの、左の音色選びと右の編集の面
 	single_board_pane m_single;
 	bool m_single_was = false;        // 前のコマでボードの面を出していたか（出し始めにボードのタブを前に出す）
