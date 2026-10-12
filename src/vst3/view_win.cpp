@@ -8,6 +8,7 @@
 // Extracted from view.cpp when the macOS port arrived, so that view.cpp could
 // stop including windows.h -- view_mac.mm includes view.h next to Cocoa.
 
+#include "engine.h"
 #include "plug_window.h"
 #include "view.h"
 
@@ -121,6 +122,7 @@ private:
 
 	plug_view &m_owner;
 	HWND m_hwnd = nullptr;
+	bool m_painted = false;         // 記録用: 最初の 1 枚を描き終えたか
 
 	// Direct3D 11 + Dear ImGui, shared with the GUI front end's window
 	// (ui/imgui_shell.h). A failed start fails attach (the host falls
@@ -152,6 +154,7 @@ bool win_window::attach(void *parent, int w, int h)
 
 	// The window procedure has to find its way back to this object
 	SetWindowLongPtrA(m_hwnd, GWLP_USERDATA, LONG_PTR(this));
+	m_painted = false;
 	SetTimer(m_hwnd, 1, 33, nullptr);        // 30 コマ／秒
 	// No device, no custom view: the host falls back to generic parameters,
 	// the way the headless Linux build answers
@@ -228,8 +231,11 @@ std::string ask_card_path(HWND h, bool create)
 
 void win_window::alert(const std::string &text)
 {
+	// 箱を出している間、ホストの窓は止まって見える。出したことと文言を記録に残す
+	engine::trace(("alert: " + text).c_str(), this);
 	const std::wstring w = ui::to_wide(text);
 	MessageBoxW(m_hwnd, w.c_str(), L"S-MU2000", MB_OK | MB_ICONWARNING);
+	engine::trace("alert closed", this);
 }
 
 void win_window::card_menu(int x, int y)
@@ -301,9 +307,18 @@ LRESULT win_window::handle(HWND h, UINT msg, WPARAM wp, LPARAM lp)
 	case WM_TIMER: {
 		RECT cr;
 		GetClientRect(h, &cr);
+		// 最初の 1 枚だけ、描き始めと描き終わりを記録に残す。「エディタを開いた直後にホストが固まる」とき、
+		// 描画の中で止まったのか、その外なのかを log.txt で分けられる（discussion #187）
+		const bool first = !m_painted;
+		if (first)
+			engine::trace("view first paint", this, cr.right, cr.bottom);
 		ui::imshell::dx11_paint(m_im, cr.right, cr.bottom, [&](ImDrawList *dl) {
 			m_owner.repaint(dl, m_im.fonts, cr.right, cr.bottom);
 		});
+		if (first) {
+			m_painted = true;
+			engine::trace("view first paint done", this);
+		}
 		return 0;
 	}
 
