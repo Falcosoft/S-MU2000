@@ -158,17 +158,25 @@ private:
 	{
 		switch (opcode) {
 		case eff_open:
+			smu2000::vst3::engine::trace("vst2 open", this);
 			m_engine.start();
 			if (m_host)
 				m_host(&m_effect, host_want_midi, 0, 1, nullptr, 0);
 			return 1;
 		case eff_close:
+			smu2000::vst3::engine::trace("vst2 close", this);
 			delete this;
+			return 1;
+		case eff_edit_idle:
+			// エディタを開いてからホストが回り続けているかの目印（開くたびに 1 回だけ書く。discussion #187）
+			if (m_view && !m_idle_seen) {
+				m_idle_seen = true;
+				smu2000::vst3::engine::trace("vst2 first editIdle", this);
+			}
 			return 1;
 		case eff_set_program:
 		case eff_set_program_name:
 		case eff_set_block_size:
-		case eff_edit_idle:
 			return 1;
 		case eff_get_program:
 			return 0;
@@ -193,6 +201,7 @@ private:
 			set_rate(opt);
 			return 1;
 		case eff_mains_changed:
+			smu2000::vst3::engine::trace("vst2 mainsChanged", this, value != 0);
 			set_processing(value != 0);
 			return 1;
 		case eff_start_process:
@@ -205,8 +214,12 @@ private:
 			return queue_events(static_cast<const events *>(ptr));
 		case eff_get_chunk:
 			return get_chunk(ptr);
-		case eff_set_chunk:
-			return set_chunk(ptr, value);
+		case eff_set_chunk: {
+			smu2000::vst3::engine::trace("vst2 setChunk", this, value);
+			const vintptr ok = set_chunk(ptr, value);
+			smu2000::vst3::engine::trace("vst2 setChunk done", this, ok);
+			return ok;
+		}
 		case eff_can_be_automated:
 			return index == 0;
 		case eff_string_to_parameter:
@@ -222,7 +235,9 @@ private:
 			return 1;
 		case eff_edit_open:
 			if (!ptr) return 0;
+			smu2000::vst3::engine::trace("vst2 editOpen", this);
 			close_editor();
+			m_idle_seen = false;
 			m_view = new smu2000::vst3::plug_view(m_engine);
 			m_rect = rect{0, 0, std::int16_t(m_view->height()), std::int16_t(m_view->width())};
 			if (m_view->attached(ptr, smu2000::vst3::plug_window_type()) != Steinberg::kResultOk) {
@@ -345,6 +360,8 @@ private:
 	{
 		if (frames <= 0)
 			return;
+		if (!m_process_seen.exchange(true, std::memory_order_relaxed))
+			smu2000::vst3::engine::trace("vst2 first process", this, frames);
 		float *left = outputs ? outputs[0] : nullptr;
 		float *right = outputs ? outputs[1] : nullptr;
 		if (!left || !right) {
@@ -408,6 +425,8 @@ private:
 	double m_rate = smu2000::vst3::NATIVE_RATE;
 	float m_gain_now = 1.0f;
 	std::atomic<bool> m_hush{false};
+	bool m_idle_seen = false;                    // 記録用: いまのエディタで effEditIdle が来たか
+	std::atomic<bool> m_process_seen{false};     // 記録用: 最初のブロックを処理したか（音声のスレッドから書くのはこの 1 回だけ）
 	std::atomic<std::uint16_t> m_sounded{0};
 	std::vector<queued_event> m_events;
 	std::vector<std::uint8_t> m_chunk;
