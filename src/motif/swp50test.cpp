@@ -35,6 +35,11 @@ int main()
 	CHECK(s.read(swp50_device::READBACK_CMD) & 0x8000);
 	CHECK(s.read(swp50_device::READBACK_DATA) == 0x3c00);
 
+	// 送りの 4 本: r = 0x22 に送り先、r = 0x23 に種類と量
+	s.write(5 << 9 | 0x22, 0x1205);
+	s.write(5 << 9 | 0x23, 0x0110);
+	CHECK(s.send_target(5, 1) == 0x12 && s.send_kind(5, 1) == 1 && s.send_atten(5, 1) == 0x10);
+
 	// 係数: 番号 0x000・0x003・0x1FF・0x200・0x3FF の番地
 	CHECK(swp50_device::coef_addr(0x000) == (0x00 << 9 | 0x31));
 	CHECK(swp50_device::coef_addr(0x003) == (0x00 << 9 | 0x3d));

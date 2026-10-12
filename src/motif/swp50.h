@@ -208,6 +208,10 @@ public:
 		const uint32_t r = 0x16 + k * 2;
 		return uint32_t(reg(n, r) & 0xff) << 16 | reg(n, r + 1);
 	}
+	// 送りの 4 本（k = 0-3）。量は減らす量で、0x10 が 6dB、0 = そのまま、0xFF = 切る
+	uint32_t send_target(uint32_t n, int k) const { return reg(n, 0x20 + k * 2) >> 8; }
+	uint32_t send_kind(uint32_t n, int k) const { return (reg(n, 0x21 + k * 2) >> 8) & 3; }
+	uint32_t send_atten(uint32_t n, int k) const { return reg(n, 0x21 + k * 2) & 0xff; }
 	bool     released(uint32_t n) const { return reg(n, 0x14) & 0x8000; }   // リリースへ進む合図
 
 	// つなぎ替え
