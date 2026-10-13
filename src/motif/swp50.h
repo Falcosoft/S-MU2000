@@ -180,6 +180,10 @@ public:
 	static double atten_to_gain(uint32_t a) { return a >= 0xff ? 0.0 : std::pow(2.0, -double(a) / 16.0); }
 	static double atten_to_db(uint32_t a) { return -double(a) * (20.0 * 0.30102999566398120 / 16.0); }
 
+	// ボイスの音量（r = 0x14 の下のバイト）の倍率。オクターブの中は dB ではなく振幅でまっすぐ下がる。
+	// 2026-10-14 に実機の 35 点と合わせたもの（エレメントの音量の 15 点は 0.01dB 以内）。送りの量が同じ式かは未確認
+	static double level_to_gain(uint32_t a) { return a >= 0xff ? 0.0 : std::ldexp(1.0 - double(a & 15) / 31.25, -int(a >> 4)); }
+
 	// ---- 書かれた値を、意味ごとに取り出す口 ----
 
 	uint16_t reg(uint32_t a, uint32_t r) const { return m_reg[(a & 0x7f) << 9 | (r & 0x1ff)]; }

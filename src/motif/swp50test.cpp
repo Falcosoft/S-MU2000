@@ -127,6 +127,12 @@ int main()
 	CHECK(std::fabs(swp50_device::atten_to_gain(0x10) - 0.5) < 1e-12);
 	CHECK(std::fabs(swp50_device::atten_to_db(0x20) + 12.0412) < 1e-3);
 	CHECK(swp50_device::atten_to_gain(0xff) == 0.0);
+	// 実機の値: 下げ幅 7 = −2.20dB、15 = −5.69dB、26 = −9.37dB、123 = −45.91dB
+	CHECK(std::fabs(20 * std::log10(swp50_device::level_to_gain(7)) + 2.20) < 0.02);
+	CHECK(std::fabs(20 * std::log10(swp50_device::level_to_gain(15)) + 5.69) < 0.02);
+	CHECK(std::fabs(20 * std::log10(swp50_device::level_to_gain(26)) + 9.37) < 0.02);
+	CHECK(std::fabs(20 * std::log10(swp50_device::level_to_gain(123)) + 45.91) < 0.02);
+	CHECK(swp50_device::level_to_gain(0x10) == 0.5 && swp50_device::level_to_gain(0xff) == 0.0);
 
 	// 数え
 	const uint16_t c0 = s.read(swp50_device::SAMPLE_COUNT);
