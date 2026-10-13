@@ -16,6 +16,7 @@
 #include "vboard.h"
 #include "vboard_dls.h"
 #include "vboard_fm.h"
+#include "vboard_harm.h"
 #include "vboard_user.h"
 #include "voice_lib.h"
 #include "smartmedia.h"
@@ -318,9 +319,14 @@ public:
 	//
 	// VBOARD_FM16 は **FM ボード**（src/vboard_fm.h）。4 オペレーターの FM 音源で、口 E の 16 パート。音色は 32 個
 	// （プログラム番号は GM の並び）、チャンネル 10 は FM のドラム
+	// VBOARD_HARM16 は **ハーモニックボード**（src/vboard_harm.h）。正弦波の倍音 64 本を足す加算合成で、口 E の 16 パート。音色は 32 個
 	enum { VBOARD_NONE = 0, VBOARD_FC = 1, VBOARD_FC16 = 2, VBOARD_DLS = 3, VBOARD_USER = 4, VBOARD_USER16 = 5, VBOARD_FM16 = 6,
+	       VBOARD_HARM16 = 7,
 	       VBOARD_KINDS };
-	static bool board_is_multi(int kind) { return kind == VBOARD_FC16 || kind == VBOARD_DLS || kind == VBOARD_USER16 || kind == VBOARD_FM16; }
+	static bool board_is_multi(int kind)
+	{
+		return kind == VBOARD_FC16 || kind == VBOARD_DLS || kind == VBOARD_USER16 || kind == VBOARD_FM16 || kind == VBOARD_HARM16;
+	}
 	// オリジナルのボードの中身と、そのファイルの場所（設定に覚えるため。空でもよい）。音を作る糸から呼ぶこと
 	void set_user_board(std::shared_ptr<const smu2000::vboard::user_board> board, const std::string &path);
 	const std::string &user_board_path() const { return m_vb_user_path; }
@@ -331,6 +337,14 @@ public:
 		m_vb_fm_path = path;
 	}
 	const std::string &fm_bank_path() const { return m_vb_fm_path; }
+	// ハーモニックボードの音色の組（src/vboard_harm.h の harm_bank。nullptr なら初期の 32 個）と、そのファイルの場所。音を作る糸から呼ぶこと
+	void set_harm_bank(std::shared_ptr<const smu2000::vboard::harm_bank> bank, const std::string &path)
+	{
+		m_vb_harm.set_bank(std::move(bank));
+		m_vb_harm_path = path;
+	}
+	const std::string &harm_bank_path() const { return m_vb_harm_path; }
+	const smu2000::vboard::harm_synth &board_harm() const { return m_vb_harm; }
 	// FC ボードの音色の組（src/vboard.h の fc_bank。nullptr なら初期の 16 個）と、そのファイルの場所。
 	// **ボード 1 枚ごとに別の組**: target は差込口（0 から。PLG-1〜6）の 1 パートの FC ボード、FC_BANK_MULTI は 16 パートの FC ボード
 	// （16 チャンネルとも同じ組）。音を作る糸から呼ぶこと
@@ -1231,6 +1245,8 @@ private:
 	smu2000::vboard::user_synth m_vb_user16;
 	smu2000::vboard::fm_synth m_vb_fm;         // VBOARD_FM16 の音源
 	std::string m_vb_fm_path;                  // その音色の組のファイル（設定に覚えるため）
+	smu2000::vboard::harm_synth m_vb_harm;     // VBOARD_HARM16 の音源
+	std::string m_vb_harm_path;
 	std::shared_ptr<const smu2000::vboard::fc_bank> m_vb_fc_bank[FC_BANKS];   // FC ボードの音色の組（ボードごと。無ければ初期の音色）
 	std::string m_vb_fc_path[FC_BANKS];
 	smu2000::vboard::fc_cc_map m_vb_fc_cc;

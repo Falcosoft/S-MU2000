@@ -48,6 +48,7 @@ inline constexpr const char *SET_BOARD_FILE = "board_file";   // オリジナル
 inline constexpr const char *const SET_BOARD_FC[7] = { "board_fc", "board_fc2", "board_fc3", "board_fc4", "board_fc5", "board_fc6", "board_fc16" };
 // FC ボードの音色の値を動かすコントロールチェンジの番号（欄の順にコンマで。src/vboard.h の fc_cc_text。無ければ初期の番号）
 inline constexpr const char *SET_BOARD_FC_CC = "board_fc_cc";
+inline constexpr const char *SET_BOARD_HARM = "board_harm";   // ハーモニックボードの音色の組のファイル（道。src/ui/harm_banks.h。無ければ初期の音色）
 inline constexpr const char *SET_BOARD_FM = "board_fm";       // FM ボードの音色の組のファイル（道。src/ui/fm_banks.h。無ければ初期の音色）
 inline constexpr const char *SET_VOLUME = "volume";
 inline constexpr const char *SET_AD_KNOB = "ad_knob";   // the panel's A/D INPUT knob, 0-1
@@ -127,6 +128,7 @@ struct remembered {
 	std::string board_dls; // board_dls= (the DLS file of the DLS board)
 	std::string board_file; // board_file= (the user's own board, board=user / user16)
 	std::string board_fm;   // board_fm= (the FM board's voice set; empty = the built-in voices)
+	std::string board_harm; // board_harm= (the harmonic board's voice set; empty = the built-in voices)
 	std::string board_fc[7]; // board_fc= board_fc2= ... board_fc6= board_fc16= (each FC board's voice set; empty = the built-in voices)
 	std::string board_fc_cc; // board_fc_cc= (control change numbers of the FC board's voice parameters; empty = the defaults)
 };
@@ -188,15 +190,16 @@ inline settings_map collect_settings(const remembered &r)
 	kv.emplace_back(SET_THIN_BENDS, r.thin_bends ? "1" : "0");
 	kv.emplace_back(SET_OUTPUT, r.analog ? "analog" : "digital");
 	kv.emplace_back(SET_EDIT_OUT, r.edit_out);
-	static const char *const BOARD_KINDS[7] = { "", "fc", "fc16", "dls", "user", "user16", "fm16" };
-	kv.emplace_back(SET_BOARD, BOARD_KINDS[r.board >= 0 && r.board < 7 ? r.board : 0]);
+	static const char *const BOARD_KINDS[8] = { "", "fc", "fc16", "dls", "user", "user16", "fm16", "harm16" };
+	kv.emplace_back(SET_BOARD, BOARD_KINDS[r.board >= 0 && r.board < 8 ? r.board : 0]);
 	for (int i = 0; i < 5; i++) {
-		kv.emplace_back(SET_BOARD_MORE[i], BOARD_KINDS[r.board_more[i] >= 0 && r.board_more[i] < 7 ? r.board_more[i] : 0]);
+		kv.emplace_back(SET_BOARD_MORE[i], BOARD_KINDS[r.board_more[i] >= 0 && r.board_more[i] < 8 ? r.board_more[i] : 0]);
 		kv.emplace_back(SET_BOARD_MORE_PART[i], std::to_string(r.board_more_part[i]));
 	}
 	kv.emplace_back(SET_BOARD_DLS, r.board_dls);
 	kv.emplace_back(SET_BOARD_FILE, r.board_file);
 	kv.emplace_back(SET_BOARD_FM, r.board_fm);
+	kv.emplace_back(SET_BOARD_HARM, r.board_harm);
 	for (int i = 0; i < 7; i++)
 		kv.emplace_back(SET_BOARD_FC[i], r.board_fc[i]);
 	kv.emplace_back(SET_BOARD_FC_CC, r.board_fc_cc);
@@ -276,7 +279,7 @@ inline void apply_settings(const settings_map &kv, remembered &r)
 	if (const std::string *v = find_setting(kv, SET_THIN_BENDS)) r.thin_bends = *v == "1";
 	if (const std::string *v = find_setting(kv, SET_OUTPUT))  r.analog  = *v == "analog";
 	if (const std::string *v = find_setting(kv, SET_EDIT_OUT)) r.edit_out = *v;
-	const auto board_kind = [](const std::string &v) { return v == "fc" ? 1 : v == "fc16" ? 2 : v == "dls" ? 3 : v == "user" ? 4 : v == "user16" ? 5 : v == "fm16" ? 6 : 0; };
+	const auto board_kind = [](const std::string &v) { return v == "fc" ? 1 : v == "fc16" ? 2 : v == "dls" ? 3 : v == "user" ? 4 : v == "user16" ? 5 : v == "fm16" ? 6 : v == "harm16" ? 7 : 0; };
 	if (const std::string *v = find_setting(kv, SET_BOARD))   r.board = board_kind(*v);
 	for (int i = 0; i < 5; i++) {
 		if (const std::string *v = find_setting(kv, SET_BOARD_MORE[i])) r.board_more[i] = board_kind(*v);
@@ -288,6 +291,7 @@ inline void apply_settings(const settings_map &kv, remembered &r)
 	if (const std::string *v = find_setting(kv, SET_BOARD_DLS)) r.board_dls = *v;
 	if (const std::string *v = find_setting(kv, SET_BOARD_FILE)) r.board_file = *v;
 	if (const std::string *v = find_setting(kv, SET_BOARD_FM)) r.board_fm = *v;
+	if (const std::string *v = find_setting(kv, SET_BOARD_HARM)) r.board_harm = *v;
 	for (int i = 0; i < 7; i++)
 		if (const std::string *v = find_setting(kv, SET_BOARD_FC[i])) r.board_fc[i] = *v;
 	if (const std::string *v = find_setting(kv, SET_BOARD_FC_CC)) r.board_fc_cc = *v;

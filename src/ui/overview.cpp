@@ -3195,7 +3195,7 @@ static void board_insert_set(int ch, int slot, xg::model &m, bridge &br)
 // ドラムキットを選ぶとそのチャンネルをドラムのパートに、メロディの音色を選ぶとメロディのパートにする
 void overview::board_pick(int kind, int ch, const mu2000::board_part &p, const mu2000::board_voice &v, bridge &br)
 {
-	const bool gm = kind == mu2000::VBOARD_DLS || kind == mu2000::VBOARD_FM16;
+	const bool gm = kind == mu2000::VBOARD_DLS || kind == mu2000::VBOARD_FM16 || kind == mu2000::VBOARD_HARM16;
 	if (gm && v.drum != p.drum)
 		board_view::send(br, { 0xf0, 0x43, 0x10, 0x4c, 0x08, ch, 0x07, v.drum ? 1 : 0, 0xf7 });
 	board_view::send(br, { 0xb0 | ch, 0, v.msb, 0xb0 | ch, 32, v.lsb, 0xc0 | ch, v.program });
@@ -3219,7 +3219,7 @@ void overview::board_voice_pane(int kind, int ch, const mu2000::board_part &p, b
 		ImGui::TextDisabled("%s", UI_TEXT(ov_board_no_voices, "The board has no voices yet"));
 		return;
 	}
-	const bool gm = kind == mu2000::VBOARD_DLS || kind == mu2000::VBOARD_FM16;
+	const bool gm = kind == mu2000::VBOARD_DLS || kind == mu2000::VBOARD_FM16 || kind == mu2000::VBOARD_HARM16;
 	const auto item = [&](const mu2000::board_voice &v, bool variant) {
 		char label[64];
 		if (variant)
@@ -3303,8 +3303,8 @@ void overview::board_program_menu(int kind, int ch, const mu2000::board_part &p,
 	if (m_board_voices.empty())
 		m_board_voices = m_board.voices();
 	const std::vector<mu2000::board_voice> &all = m_board_voices;
-	// DLS のボードと FM ボードは GM の並びで、ドラムのパートを持つ
-	const bool dls = kind == mu2000::VBOARD_DLS || kind == mu2000::VBOARD_FM16;
+	// DLS のボードと FM ボード、ハーモニックボードは GM の並びで、ドラムのパートを持つ
+	const bool dls = kind == mu2000::VBOARD_DLS || kind == mu2000::VBOARD_FM16 || kind == mu2000::VBOARD_HARM16;
 	const auto pick = [&](const mu2000::board_voice &v) { board_pick(kind, ch, p, v, br); };
 	const auto is_now = [&](const mu2000::board_voice &v) {
 		return v.drum == p.drum && v.program == p.program && (v.drum || (v.msb == p.msb && v.lsb == p.lsb));
@@ -3419,7 +3419,7 @@ void overview::board_row(int kind, int ch, const mu2000::board_part &p, xg::mode
 	ImGuiIO &io = ImGui::GetIO();
 	const float fs = ImGui::GetFontSize();
 	ImDrawList *dl = ImGui::GetWindowDrawList();
-	const bool banks = kind == mu2000::VBOARD_DLS || kind == mu2000::VBOARD_FM16;       // GM の並び（楽器の絵が引ける）
+	const bool banks = kind == mu2000::VBOARD_DLS || kind == mu2000::VBOARD_FM16 || kind == mu2000::VBOARD_HARM16;       // GM の並び（楽器の絵が引ける）
 	ImGui::PushID(1000 + ch);
 
 	// ---- パートと音色
