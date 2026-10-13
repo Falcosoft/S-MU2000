@@ -7,6 +7,7 @@
   41 ee 20（30 バイト）: 00 エレメントの音量、04-07 AEG の時間（アタック・ディケイ 1・ディケイ 2・リリース）、
                          08-0B AEG の高さ（初め・アタック・ディケイ 1・ディケイ 2）
   40 70 00（82 バイト）: 頭の 10 文字が音色の名前
+--json 置き場 を付けると、音色ごとに名前つきの JSON を書く（欄の表は mr_params.py。共通部分・エフェクト・エレメントの全部の欄）。
 --drum を付けると、ドラムボイス（mm = 20・21・28）を鍵ごとの表にする。
   47 kk 00（19 バイト）: 00 スイッチ、01 波形の種類（0 = プリセットの波形、1 = ボイス）、06-07 波形番号、0C パン
   47 kk 20（12 バイト）: 00 音量。kk = 0-72 が C0-C6（MIDI の 24-96）
@@ -17,6 +18,7 @@ import os
 import sys
 
 import mr_bulk
+import mr_params
 
 BANKS = {0x00: "PRE1", 0x01: "PRE2", 0x02: "PRE3", 0x03: "PRE4", 0x04: "PRE5", 0x05: "PRE6",
          0x06: "GM", 0x08: "USR1", 0x09: "USR2", 0x0A: "USR3", 0x0F: "EDIT"}
@@ -89,7 +91,26 @@ def main():
         i = a.index("-o")
         out = open(a[i + 1], "w", encoding="utf-8", newline="\n")
         del a[i:i + 2]
+    jdir = None
+    if "--json" in a:
+        i = a.index("--json")
+        jdir = a[i + 1]
+        del a[i:i + 2]
     d = a[0]
+    if jdir:
+        import json
+        os.makedirs(jdir, exist_ok=True)
+        n = 0
+        for f in sorted(os.listdir(d)):
+            if f.endswith(".syx") and int(f[:2], 16) in BANKS:
+                v = mr_params.decode_voice(blocks(os.path.join(d, f)))
+                v["bank"] = BANKS[int(f[:2], 16)]
+                v["number"] = int(f[3:6]) + 1
+                with open(os.path.join(jdir, f[:-4] + ".json"), "w", encoding="utf-8", newline="\n") as o:
+                    json.dump(v, o, indent=1)
+                n += 1
+        print("# %d 音色" % n, file=sys.stderr)
+        return
     if drum:
         drum_main(d, out, waves)
         return

@@ -150,3 +150,65 @@ def decode(block_key, data):
             continue
         out[name] = data[off] if size == 1 else (data[off] << 7 | data[off + 1])
     return out
+
+
+def _fx(n_extra):
+    rows = [(0x00, 2, "type")]
+    for i in range(16):
+        rows.append((0x02 + i * 2, 2, "param%d" % (i + 1)))
+    return rows + n_extra
+
+
+# ノーマルボイスの共通部分。鍵は区画の番地 3 バイト
+COMMON_BLOCKS = {
+    (0x40, 0x00, 0x00): [   # 17 バイト
+        (0x01, 1, "volume"),
+        (0x02, 1, "same_note_key_on_assign"),
+        (0x03, 1, "mono_poly"),
+        (0x04, 1, "micro_tuning_scale"),
+        (0x05, 1, "pitch_bend_range_upper"),
+        (0x06, 1, "pitch_bend_range_lower"),
+        (0x07, 1, "portamento_mode"),
+        (0x08, 1, "portamento_switch"),
+        (0x09, 1, "portamento_time"),
+        (0x0A, 1, "portamento_time_mode"),
+        (0x0B, 1, "reverb_send"),
+        (0x0C, 1, "chorus_send"),
+        (0x0F, 1, "micro_tuning_root"),
+        (0x10, 1, "legato_slope"),
+    ],
+    (0x40, 0x00, 0x40): [(0x00, 1, "insertion_connect_type")],     # 0 Para / 1 ins1→2 / 2 ins2→1
+    (0x40, 0x01, 0x00): _fx([(0x22, 1, "return"), (0x23, 1, "pan")]),                                   # リバーブ。36 バイト
+    (0x40, 0x02, 0x00): _fx([(0x22, 1, "return"), (0x23, 1, "pan"), (0x24, 1, "send_to_reverb")]),      # コーラス。37 バイト
+    (0x40, 0x03, 0x00): _fx([]),                                                                        # インサーション 1。34 バイト
+    (0x40, 0x04, 0x00): _fx([]),                                                                        # インサーション 2
+}
+COMMON_NAMES = {(0x40, 0x00, 0x00): "common", (0x40, 0x00, 0x40): "insertion_connect", (0x40, 0x01, 0x00): "reverb",
+                (0x40, 0x02, 0x00): "chorus", (0x40, 0x03, 0x00): "insertion1", (0x40, 0x04, 0x00): "insertion2"}
+ELEMENT_NAMES = {(0x41, 0x00): "oscillator", (0x41, 0x20): "amplitude", (0x42, 0x00): "pitch", (0x43, 0x00): "filter",
+                 (0x44, 0x00): "eq", (0x44, 0x40): "lfo", (0x44, 0x50): "common_lfo_ratio"}
+
+
+def decode_rows(rows, data):
+    out = {}
+    for off, size, name in rows:
+        if off + size <= len(data):
+            out[name] = data[off] if size == 1 else (data[off] << 7 | data[off + 1])
+    return out
+
+
+def decode_voice(blocks):
+    """mr_voice.blocks() の結果を、名前つきの入れ子にする"""
+    v = {"name": bytes(blocks.get((0x40, 0x70, 0x00), b"")[:10]).decode("ascii", "replace").rstrip()}
+    for key, rows in COMMON_BLOCKS.items():
+        if key in blocks:
+            v[COMMON_NAMES[key]] = decode_rows(rows, blocks[key])
+    v["elements"] = []
+    for e in range(4):
+        el = {}
+        for (blk, sub), rows in ELEMENT_BLOCKS.items():
+            d = blocks.get((blk, e, sub))
+            if d is not None:
+                el[ELEMENT_NAMES[(blk, sub)]] = decode_rows(rows, d)
+        v["elements"].append(el)
+    return v
