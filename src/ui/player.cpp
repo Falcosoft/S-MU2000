@@ -103,6 +103,7 @@ bool player::add(const std::string &path, std::string &err, int *index)
 	std::lock_guard<std::mutex> lock(m_lock);
 	m_list.push_back(std::move(e));
 	m_order.clear();
+	m_rev++;
 	if (index)
 		*index = int(m_list.size()) - 1;
 	return true;
@@ -124,6 +125,7 @@ bool player::add_from_memory(const u8 *data, size_t size, const std::string &nam
 	std::lock_guard<std::mutex> lock(m_lock);
 	m_list.push_back(std::move(e));
 	m_order.clear();
+	m_rev++;
 	if (index)
 		*index = int(m_list.size()) - 1;
 	return true;
@@ -141,6 +143,7 @@ void player::remove(int index)
 		if (!was_current) {
 			m_list.erase(m_list.begin() + index);
 			m_order.clear();
+			m_rev++;
 			if (c > index)
 				m_cur.store(c - 1, std::memory_order_relaxed);
 			return;
@@ -152,6 +155,7 @@ void player::remove(int index)
 	if (index < int(m_list.size()))
 		m_list.erase(m_list.begin() + index);
 	m_order.clear();
+	m_rev++;
 	m_cur.store(m_list.empty() ? -1 : std::min(index, int(m_list.size()) - 1), std::memory_order_relaxed);
 }
 
@@ -165,6 +169,7 @@ void player::move(int from, int to)
 	m_list.erase(m_list.begin() + from);
 	m_list.insert(m_list.begin() + to, std::move(e));
 	m_order.clear();
+	m_rev++;
 	// 鳴らしている曲の番号を付け替える
 	int c = m_cur.load(std::memory_order_relaxed);
 	if (c == from)
@@ -182,7 +187,18 @@ void player::clear()
 	std::lock_guard<std::mutex> lock(m_lock);
 	m_list.clear();
 	m_order.clear();
+	m_rev++;
 	m_cur.store(-1, std::memory_order_relaxed);
+}
+
+std::vector<std::string> player::paths() const
+{
+	std::lock_guard<std::mutex> lock(m_lock);
+	std::vector<std::string> out;
+	for (const entry &e : m_list)
+		if (!e.path.empty())
+			out.push_back(e.path);
+	return out;
 }
 
 void player::reshuffle(int first)

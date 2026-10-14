@@ -11,7 +11,11 @@
 #include "imgui.h"
 
 #include "ui/font_file.h"   // the fontconfig lookup lives in there
+#include "ui/sdl_popup.h"
+#include "ui/texts.h"
 
+#include <atomic>
+#include <cstdio>
 #include <mutex>
 #include <vector>
 
@@ -20,6 +24,74 @@ namespace ui {
 namespace {
 
 using drop_fn = void (*)(const std::string &path);
+
+// The editors' file requests (xgui::ask_open_wav, ask_open_dls, ask_open_card, ask_open_midi, ask_save_file...),
+// answered with SDL's file panel after the frame, the way pc_window.cpp does it on Windows. Without this the
+// Linux editors only had a path box (issue #210). One file at a time for MIDI (the SDL panel picks one)
+void file_dialog(SDL_Window *win, xgui::file_ask ask, const std::vector<u8> &bytes)
+{
+	std::atomic<bool> quit{ false };
+	const bool wav = ask == xgui::file_ask::open && xgui::file_ask_is_wav();
+	const bool dls = ask == xgui::file_ask::open && xgui::file_ask_is_dls();
+	const bool card = !dls && ask == xgui::file_ask::open && xgui::file_ask_is_card();
+	const bool midi = ask == xgui::file_ask::open && xgui::file_ask_is_midi();
+	using sdl_popup::file_filter;
+	if (ask == xgui::file_ask::save) {
+		const file_filter f[] = { { UI_TEXT(dlg_sysex_desc, "SysEx"), "syx" } };
+		const std::string path = sdl_popup::save_file(win, quit, f, 1, "S-MU2000.syx");
+		if (path.empty())
+			return;
+		std::FILE *fp = std::fopen(path.c_str(), "wb");
+		const bool ok = fp && std::fwrite(bytes.data(), 1, bytes.size(), fp) == bytes.size();
+		if (fp)
+			std::fclose(fp);
+		char note[64];
+		std::snprintf(note, sizeof(note), ok ? UI_TEXT(note_exported_fmt, "Exported (%zu bytes)") : UI_TEXT(note_export_fail, "Cannot export"), bytes.size());
+		xgui::set_file_note(note);
+		return;
+	}
+	if (ask != xgui::file_ask::open)
+		return;
+	file_filter f[2];
+	if (midi)
+		f[0] = { UI_TEXT(dlg_midi_desc, "MIDI files"), "mid;midi;smf;m3u;m3u8" };
+	else if (dls)
+		f[0] = { UI_TEXT(dlg_dls_desc, "DLS sound bank"), "dls" };
+	else if (card)
+		f[0] = { UI_TEXT(dlg_card_or_m2a_desc, "SmartMedia image or M2A file"), "img;sm;m2a" };
+	else if (wav)
+		f[0] = { UI_TEXT(dlg_wav_desc, "WAV audio or SysEx"), "wav;syx" };
+	else
+		f[0] = { UI_TEXT(dlg_sysex_desc, "SysEx"), "syx" };
+	f[1] = { UI_TEXT(dlg_all_files, "All files"), "*" };
+	const std::string path = sdl_popup::open_file(win, quit, f, 2, std::string());
+	if (path.empty())
+		return;
+	if (midi) {
+		xgui::give_opened_midi({ path });
+		return;
+	}
+	if (dls) {
+		xgui::give_opened_dls(path);
+		return;
+	}
+	if (card) {
+		xgui::give_opened_card(path);          // big images: only the place, the sampling window reads it
+		return;
+	}
+	std::vector<u8> in;
+	if (std::FILE *fp = std::fopen(path.c_str(), "rb")) {
+		u8 buf[65536];
+		size_t n;
+		const size_t cap = wav ? (64u << 20) : (16u << 20);
+		while ((n = std::fread(buf, 1, sizeof(buf), fp)) > 0 && in.size() < cap)
+			in.insert(in.end(), buf, buf + n);
+		std::fclose(fp);
+		xgui::give_opened_file(std::move(in));
+	} else {
+		xgui::set_file_note(UI_TEXT(note_import_fail, "Could not import"));
+	}
+}
 
 drop_fn &drop_handler()
 {
@@ -121,6 +193,9 @@ void pc_window::shutdown(bridge &br)
 
 bool pc_window::create(std::string &err)
 {
+	// the editors offer their file buttons (answered by file_dialog() above)
+	xgui::set_file_dialogs(true);
+	xgui::set_midi_dialog(true);
 	destroy();
 	m_win = SDL_CreateWindow(title_of(*m_view).c_str(), m_view->default_width(),
 	                         m_view->default_height(), SDL_WINDOW_RESIZABLE);
@@ -201,6 +276,12 @@ void pc_window::frame(xg::model &m, const xg_snapshot &ram, bridge &br)
 
 	imshell::sdl_present(m_im, m_win);
 	// no wait: gui's timer (30 frames a second) decides the pace
+
+	// A file panel the view asked for opens now, outside the frame (pc_window.cpp does the same on Windows)
+	std::vector<u8> bytes;
+	const xgui::file_ask ask = xgui::take_file_ask(bytes);
+	if (ask != xgui::file_ask::none)
+		file_dialog(m_win, ask, bytes);
 }
 
 bool pc_window::route_event(const SDL_Event &ev)

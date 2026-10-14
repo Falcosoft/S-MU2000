@@ -88,6 +88,7 @@ struct window_options {
 	bool open_sampling = false;
 	bool open_player = false;     // MIDI プレイヤーの窓（gui だけ）
 	bool open_board = false;      // プラグインボードの窓（gui だけ）
+	bool open_keyboard = false;   // 鍵盤の窓（gui だけ）
 	bool lcd_only = false;   // the LCD on its own
 };
 
@@ -103,6 +104,7 @@ inline bool consume_window_option(const char *arg, window_options &o)
 	if (!std::strcmp(arg, "--sampling-window")) { o.open_sampling = true; return true; }
 	if (!std::strcmp(arg, "--player-window")) { o.open_player = true; return true; }
 	if (!std::strcmp(arg, "--board-window")) { o.open_board = true; return true; }
+	if (!std::strcmp(arg, "--keyboard-window")) { o.open_keyboard = true; return true; }
 	if (!std::strcmp(arg, "--lcd")) { o.lcd_only = true; return true; }
 	return false;
 }

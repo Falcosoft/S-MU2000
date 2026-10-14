@@ -54,6 +54,8 @@
 #endif
 #include "ui/player.h"
 #include "ui/player_view.h"
+#include "ui/playlist.h"
+#include "ui/keyboard_view.h"
 #include "ui/tool_args.h"
 #include "ui/settings.h"
 #include "ui/settings_view.h"
@@ -134,6 +136,7 @@ public:
 	pc_window sampling{ std::make_unique<sampling_editor>() };
 	settings_state preferences_state;
 	settings_actions preferences_actions;
+	pc_window keyboard_win{ std::make_unique<keyboard_view>() };     // 鍵盤だけの窓（issue #212）
 	pc_window settings_win{ std::make_unique<settings_view>(preferences_state, preferences_actions) };
 	// MIDI プレイヤーの窓。gui だけが持つ（上の 6 つはプラグインにもある）
 	pc_window player_win{ std::make_unique<player_view>(play) };
@@ -205,6 +208,8 @@ public:
 			ImGuiContext *const panel_ctx = ImGui::GetCurrentContext();
 			player_win.frame(panel.xg(), panel.ram(), br);
 			board_win.frame(panel.xg(), panel.ram(), br);
+			keyboard_win.frame(panel.xg(), panel.ram(), br);
+			save_playlist();
 			sync_settings_state();
 			settings_win.frame(panel.xg(), panel.ram(), br);
 			// マスターの窓の「プラグインボード...」
@@ -509,6 +514,10 @@ public:
 			open_pc_window(board_win);
 			return;
 		}
+		if (kind == BAR_KEYBOARD) {
+			open_pc_window(keyboard_win);
+			return;
+		}
 		open_pc_window(*window_for_kind(kind, list, pc, fx, shapes, master, sampling));
 	}
 
@@ -516,6 +525,38 @@ public:
 
 	// Where the file lives differs per platform (registry side vs Library)
 	virtual std::string settings_path() const = 0;
+
+	// ---- the player's list (issue #211): playlist.m3u in the settings folder, read back at start and
+	// written whenever the list changes. --nomidi leaves it alone, like the other remembered things.
+	// Songs that cannot be read at start are skipped, so they drop out the next time the list is written
+	bool playlist_loaded = false;
+	unsigned playlist_saved_rev = 0;
+	void load_playlist()
+	{
+		if (keep_settings)
+			return;
+		const std::string path = playlist::default_path();
+		if (path.empty())
+			return;
+		for (const std::string &song : playlist::read(path)) {
+			std::string err;
+			play.add(song, err);
+		}
+		playlist_saved_rev = play.revision();
+		playlist_loaded = true;
+	}
+	void save_playlist()
+	{
+		if (!playlist_loaded || keep_settings)
+			return;
+		const unsigned rev = play.revision();
+		if (rev == playlist_saved_rev)
+			return;
+		playlist_saved_rev = rev;
+		const std::string path = playlist::default_path();
+		if (!path.empty())
+			playlist::write(path, play.paths());
+	}
 
 	void save_settings()
 	{
@@ -1510,6 +1551,8 @@ public:
 			open_window_by_kind(BAR_PLAYER);
 		if (w.open_board && !w.lcd_only)
 			open_window_by_kind(BAR_BOARD);
+		if (w.open_keyboard && !w.lcd_only)
+			open_window_by_kind(BAR_KEYBOARD);
 	}
 
 	// Starts the audio device. False parks the engine on the failure and
@@ -1589,6 +1632,7 @@ public:
 			ImGuiContext *const panel_ctx = ImGui::GetCurrentContext();
 			player_win.shutdown(br);
 			board_win.shutdown(br);
+			keyboard_win.shutdown(br);
 			settings_win.shutdown(br);
 			ImGui::SetCurrentContext(panel_ctx);
 		}
@@ -1673,6 +1717,7 @@ public:
 	        const window_options &wo)
 	{
 		const remembered saved = initialize_audio_settings(a, oo);
+		load_playlist();
 		setup_for_window(a, wo, oo.factory);
 
 		// The remembered ports open on this thread, while the machine boots

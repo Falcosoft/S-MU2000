@@ -11,6 +11,7 @@
 
 #include "lang.h"
 #include "player.h"
+#include "playlist.h"
 #include "texts.h"
 #include "xg_ui.h"
 
@@ -217,9 +218,21 @@ public:
 
 private:
 	// 足す。何も鳴らしていなければ、足した最初の曲から鳴らす
-	void add_all(const std::vector<std::string> &paths, bridge &br)
+	void add_all(const std::vector<std::string> &given, bridge &br)
 	{
 		m_note.clear();
+		// M3U のリスト（.m3u・.m3u8）は、中に並んでいる曲に開く
+		std::vector<std::string> paths;
+		for (const std::string &p : given) {
+			if (!playlist::is_playlist(p)) {
+				paths.push_back(p);
+				continue;
+			}
+			const std::vector<std::string> inside = playlist::read(p);
+			if (inside.empty())
+				m_note = std::string(UI_TEXT(ply_list_empty, "No songs in that playlist: ")) + p;
+			paths.insert(paths.end(), inside.begin(), inside.end());
+		}
 		int first = -1;
 		for (const std::string &p : paths) {
 			std::string err;

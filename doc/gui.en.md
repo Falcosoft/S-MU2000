@@ -133,8 +133,31 @@ all add to this list before playing, so whichever way a song starts it can be co
   10,000 bytes a second for the USB port and 3,125 for DIN) before playing on. Songs with a lot of SysEx take a
   moment; `catching up the settings...` is shown meanwhile
 * **Bar, beat and tempo** are counted from the song's time signatures (`FF 58`) and tempo changes (`FF 51`)
+* **The list is remembered** (issue #211): whenever it changes it is written to `playlist.m3u` in the settings folder
+  and read back at the next start. The format is M3U (UTF-8 text, one file per line; other players read it too).
+  Songs that cannot be read at start are skipped, so they also drop out of the file the next time the list changes.
+  With `--nomidi` it is neither read nor written. Adding a `.m3u` / `.m3u8` file adds the songs listed in it
+  (relative paths are read from the playlist's folder)
 
 The plugins (VST3 and so on) do not have this window; there the DAW plays the song.
+
+### The keyboard window
+
+Open it with `Keyboard` on the bar at the top of the window (or `--keyboard-window`): a window with only a keyboard
+(issue #212), for playing the way a keyboard plugged into the unit's front MIDI IN A was played.
+
+* **Port and channel**: the MIDI input (A to D) and channel (1 to 16) the keys play into. The default is port A,
+  channel 1. C and D exist on USB only (parts 33-64)
+* **Keys**: five octaves. Press to play, slide to move to the next key. Lower on the key is louder (as on the other
+  keyboards); with `Fixed velocity` every key plays at the set velocity. `<` `>` move by an octave (the name is the
+  lowest key; middle C = C3)
+* **Bend and modulation**: the two strips on the left. Bend springs back to the middle; modulation (controller 1)
+  stays where it is left. `Sustain` switches controller 64
+* **PC keyboard**: the same layout as the list window's keyboard (the A row, Q row and number row are white keys,
+  Z flattens, X sharpens, PageUp / PageDown move the octave)
+
+Closing the window, or changing the port or channel, releases the held notes and resets bend, modulation and
+sustain. The plugins do not have this window (the DAW's keyboard plays them).
 
 ## Choosing MIDI ports
 
