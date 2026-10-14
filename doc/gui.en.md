@@ -218,11 +218,24 @@ as `output` (`digital` / `analog`) in `gui.ini`. The default is digital.
 
 | Output | Contents |
 |---|---|
-| Digital | the same as the unit's S/PDIF. The DC that some DPCM samples carry (A2 and A5 of Alto Sax Legato, for instance) comes out as it is. Recorded from the unit's S/PDIF and compared, even the DC level matches to 0.1 LSB (issue #3) |
+| Digital | the same signal as the unit's S/PDIF, at the level the S/PDIF has **when UTIL → SYS `DigiOutGain` is +12 dB** (below). The DC that some DPCM samples carry (A2 and A5 of Alto Sax Legato, for instance) comes out as it is. Recorded from the unit's S/PDIF and compared, even the DC level matches to 0.1 LSB (issue #3) |
 | Analog | meant as LINE OUT / PHONES: DC is removed after the DAC (before the VOLUME knob) with a first-order high-pass (`src/analog_out.h`). Right after a sound with DC is released, a slow swing appears as what was removed comes back |
 
 **The analog cut-off (3 Hz) is a placeholder.** The unit's analog output has
 not been recorded yet; once measured, set `analog_out::CUTOFF_HZ` to match.
+
+**Output level and `DigiOutGain` (checked 2026-10-14).** The unit's UTIL → SYS `DigiOutGain` (0 / +6 / +12 dB,
+default 0) is a gain on the S/PDIF output only. The firmware rewrites the constants of the last two steps of the
+effect DSP (MEG steps 0x92 and 0x95, which produce `m2e` and `m2f`) to 0x0800, 0x1000 or 0x2000, and that pair
+goes out on S/PDIF. The emulator's outputs (digital and analog) are taken from the DAC pair (`m30`, `m31`): the
+same signal one sample earlier, at the level the S/PDIF has **when `DigiOutGain` is +12 dB**. Recorded from the
+unit's S/PDIF at the default 0 dB, the unit is 12 dB quieter than the emulator; at +12 dB the levels match too
+(single organ and piano notes agree in RMS to four digits).
+
+The item can be set in the emulator as well, and the firmware writes the same constants, but the output is the
+DAC pair, so the sound does not change. The output could follow it by taking the S/PDIF pair instead, but at the
+default 0 dB everyone's sound would drop by 12 dB, so it does not. To compare levels with the unit's S/PDIF,
+record the unit at +12 dB, or add 12 dB before comparing.
 
 ### When a port does not respond, or MIDI floods
 
