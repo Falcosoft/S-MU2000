@@ -779,6 +779,7 @@ std::vector<u8> g_file_out, g_file_in;
 bool g_file_in_ready = false;
 // 頼みと読んだ中身が .syx か WAV か。窓ごとに取り違えないように（マスターの窓とサンプリングの窓）
 bool g_file_ask_wav = false, g_file_in_wav = false;
+int g_file_ask_wav_who = 0, g_file_in_wav_who = 0;       // WAV を頼んだのは誰か（0 = サンプリングの窓）
 // カードの画像（サンプリングの窓の「カード」）。中身は読まず、選ばれた場所だけを返す
 bool g_file_ask_card = false, g_card_path_ready = false;
 std::string g_card_path;
@@ -831,7 +832,16 @@ void set_file_dialogs(bool on) { g_file_dialogs = on; }
 bool file_dialogs() { return g_file_dialogs; }
 void ask_save_file(std::vector<u8> bytes) { g_file_out = std::move(bytes); g_file_ask = file_ask::save; }
 void ask_open_file() { g_file_ask = file_ask::open; g_file_ask_wav = false; g_file_ask_card = false; g_file_ask_midi = false; g_file_ask_dls = false; }
-void ask_open_wav() { g_file_ask = file_ask::open; g_file_ask_wav = true; g_file_ask_card = false; g_file_ask_midi = false; g_file_ask_dls = false; }
+void ask_open_wav() { ask_open_wav_for(0); }
+void ask_open_wav_for(int who)
+{
+	g_file_ask = file_ask::open;
+	g_file_ask_wav = true;
+	g_file_ask_wav_who = who;
+	g_file_ask_card = false;
+	g_file_ask_midi = false;
+	g_file_ask_dls = false;
+}
 bool file_ask_is_wav() { return g_file_ask_wav; }
 file_ask take_file_ask(std::vector<u8> &bytes)
 {
@@ -842,10 +852,17 @@ file_ask take_file_ask(std::vector<u8> &bytes)
 	g_file_out.clear();
 	return a;
 }
-void give_opened_file(std::vector<u8> bytes) { g_file_in = std::move(bytes); g_file_in_ready = true; g_file_in_wav = g_file_ask_wav; }
-bool take_opened_wav(std::vector<u8> &bytes)
+void give_opened_file(std::vector<u8> bytes)
 {
-	if (!g_file_in_ready || !g_file_in_wav)
+	g_file_in = std::move(bytes);
+	g_file_in_ready = true;
+	g_file_in_wav = g_file_ask_wav;
+	g_file_in_wav_who = g_file_ask_wav_who;
+}
+bool take_opened_wav(std::vector<u8> &bytes) { return take_opened_wav_for(0, bytes); }
+bool take_opened_wav_for(int who, std::vector<u8> &bytes)
+{
+	if (!g_file_in_ready || !g_file_in_wav || g_file_in_wav_who != who)
 		return false;
 	bytes = std::move(g_file_in);
 	g_file_in.clear();

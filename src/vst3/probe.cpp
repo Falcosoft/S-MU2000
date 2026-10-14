@@ -6,6 +6,8 @@
 //   vst3probe <DLL> <MIDI ファイル> <出力 wav> [--rate 48000] [--block 512] [--adc-sine]
 //
 // --adc-sine は A/D INPUT（補助の入力バス）に 440Hz の正弦を流す（入力の道が落ちないかを見る）
+// --fx はエフェクトとしてのクラス（S-MU2000 FX。issue #191）で同じことをする。入力がメインのバスに
+//   なっていて、MIDI で何も設定しなくても入れた音が出てくるかを見る
 // --automation は XG の値のパラメータ（src/vst3/automation.h）を試す: 一覧、値を送って音源に入ったか、
 //   状態の保存と復元、機械まるごとの状態を抜いて XG の値の控えだけで戻るか
 // --view のとき、画面で値を触ると beginEdit / performEdit / endEdit が出る
@@ -681,6 +683,50 @@ int run_fl(IPluginFactory *fac, const TUID cid, double rate, int block, bool (*e
 			bad++;
 	}
 
+	// 0b. 画面を広げて閉じ、開き直す。ホストは開くたびに画面を作り直すので、広げた幅は本体が覚えている
+	//     （engine::view_width。ディスカッション #187）。閉じるときに幅が設定の置き場の plugin_view.txt にも
+	//     書かれるので、最後に元の幅へ戻してから閉じる（試験が使う人の覚えを書き換えないように）
+	{
+		instance in;
+		if (!make_instance(fac, cid, in)) { std::printf("NG: 作れない\n"); return 1; }
+		start_instance(in, rate, block);
+		bool ok = false;
+		int first_w = 0, asked_w = 0, again_w = 0, again_h = 0, asked_h = 0;
+		if (IPlugView *view = in.ctrl->createView(ViewType::kEditor)) {
+			ViewRect vr{};
+			view->getSize(&vr);
+			first_w = vr.getWidth();
+			ViewRect want(0, 0, first_w + 240, vr.getHeight());
+			view->checkSizeConstraint(&want);     // 高さは比で決まる
+			asked_w = want.getWidth();
+			asked_h = want.getHeight();
+			view->onSize(&want);
+			view->release();
+		}
+		if (IPlugView *view = in.ctrl->createView(ViewType::kEditor)) {
+			ViewRect vr{};
+			view->getSize(&vr);
+			again_w = vr.getWidth();
+			again_h = vr.getHeight();
+			ViewRect back(0, 0, first_w, vr.getHeight());
+			view->checkSizeConstraint(&back);
+			view->onSize(&back);
+			view->release();
+		}
+		ok = asked_w == first_w + 240 && again_w == asked_w && again_h == asked_h;
+		in.proc->setProcessing(false);
+		in.comp->setActive(false);
+		in.comp->terminate();
+		in.ctrl->terminate();
+		in.proc->release();
+		in.ctrl->release();
+		in.comp->release();
+		std::printf("%s: 広げた画面を開き直すと同じ大きさ（%d → %d、開き直して %d x %d）\n",
+		            ok ? "OK" : "NG", first_w, asked_w, again_w, again_h);
+		if (!ok)
+			bad++;
+	}
+
 	// 1. 挿して画面を出し、外す。親の窓を先に壊し、terminate の後で受け口を片付けてから手放す
 	{
 		instance in;
@@ -1224,6 +1270,7 @@ int main(int argc, char **argv)
 	bool torture = false;
 	bool fl = false;         // FL Studio の外し方のまね（run_fl）
 	bool adc_sine = false;
+	bool fx = false;                    // --fx: エフェクトとしてのクラス（S-MU2000 FX）を試す
 	bool one_bus = false;    // 比べる用。MIDI ファイルの口 B も A のバスへ流す
 	bool data_midi = false;  // VSTHost のまね。チャンネルメッセージも DataEvent で渡す
 	bool restart = false;    // DAW の「止めて再生」のまね（流す直前に setProcessing を切り入れする）
@@ -1239,6 +1286,7 @@ int main(int argc, char **argv)
 		else if (!std::strcmp(argv[i], "--torture")) torture = true;
 		else if (!std::strcmp(argv[i], "--fl")) fl = true;
 		else if (!std::strcmp(argv[i], "--adc-sine")) adc_sine = true;
+		else if (!std::strcmp(argv[i], "--fx")) fx = adc_sine = true;
 		else if (!std::strcmp(argv[i], "--one-bus")) one_bus = true;
 		else if (!std::strcmp(argv[i], "--data-midi")) data_midi = true;
 		else if (!std::strcmp(argv[i], "--restart")) restart = true;
@@ -1324,7 +1372,8 @@ int main(int argc, char **argv)
 		PClassInfo ci{};
 		if (fac->getClassInfo(i, &ci) != kResultOk) continue;
 		std::printf("  [%d] %s  種別 %s\n", i, ci.name, ci.category);
-		if (!std::strcmp(ci.category, kVstAudioEffectClass))
+		// クラスは 2 つ: 0 = 音源、1 = 同じ本体をエフェクトとして（--fx で選ぶ）
+		if (!std::strcmp(ci.category, kVstAudioEffectClass) && i == (fx ? 1 : 0))
 			std::memcpy(cid, ci.cid, sizeof(TUID));
 	}
 	{
@@ -1381,6 +1430,15 @@ int main(int argc, char **argv)
 	SpeakerArrangement out_arr = SpeakerArr::kStereo;
 	SpeakerArrangement in_arr = SpeakerArr::kStereo;
 	std::printf("音声入力バス %d\n", comp->getBusCount(kAudio, kInput));
+	{
+		BusInfo bi{};
+		if (comp->getBusInfo(kAudio, kInput, 0, bi) == kResultOk) {
+			const bool main_in = bi.busType == kMain && (bi.flags & BusInfo::kDefaultActive);
+			std::printf("%s: 音声入力は%s\n", main_in == fx ? "OK" : "NG", main_in ? "メインのバス（既定で有効）" : "補助のバス");
+			if (main_in != fx)
+				return 2;
+		}
+	}
 	if (adc_sine) {
 		if (proc->setBusArrangements(&in_arr, 1, &out_arr, 1) != kResultTrue)
 			std::printf("入力 1 つの並びを断られた\n");
@@ -1556,7 +1614,8 @@ int main(int argc, char **argv)
 		const int32 n = int32(std::min<int64_t>(block, total - pos));
 		if (adc_sine)
 			for (int32 i = 0; i < n; i++)
-				il[size_t(i)] = ir[size_t(i)] = float(0.3 * std::sin(2 * 3.14159265358979 * 440.0 * double(pos + i) / rate));
+				ir[size_t(i)] = (fx ? 0.5f : 1.0f) *   // --fx は右を半分にして、左右が入れ替わらず混ざらないかも見る
+				    (il[size_t(i)] = float(0.3 * std::sin(2 * 3.14159265358979 * 440.0 * double(pos + i) / rate)));
 		elist.clear();
 		pchanges.clear();
 

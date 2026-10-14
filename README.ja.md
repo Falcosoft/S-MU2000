@@ -105,6 +105,14 @@ gui とプラグインは、同じ順番でこのディレクトリを探す（�
 MIDI 経由の予備の経路もあり、両方で吸ったものが 1 バイト残らず一致することを
 確かめてある。
 
+**ファームを書き換えずに吸う方法**もある。shingo45endo さんの
+[mu-wave-romdumper](https://shingo45endo.github.io/mu-wave-romdumper/) は、純正の firmware が
+もともと答える SysEx だけを使って、ブラウザから MIDI で波形 ROM を読む。本体には何も書き込まない。
+MIDI インターフェース（IN と OUT）が要り、約 4 時間かかる。別のプロジェクトで、こちらの実機では
+試していないが、同じメッセージをこのエミュの中の純正 firmware に送ると、波形 ROM が 1 バイト残らず
+そのまま返ってくる。できたファイルの当てはめ方は
+[doc/dump](doc/dump/README.md#ファームを書き換えずに吸う) に書いた。
+
 ## 使い方
 
 **はじめて使うなら [doc/manual.md](doc/manual.md)**（用意するもの → 作る → 鳴らす → 画面 → DAW の通しの手引き。English: [doc/manual.en.md](doc/manual.en.md)）。
@@ -143,7 +151,7 @@ build/rec.exe    <番号> <wav> <秒> [--send <番号> <MIDI>]  実機の音を�
 **Domino など外のシーケンサから鳴らす手順は
 [doc/domino.md](doc/domino.md)**。要るのは仮想 MIDI ケーブル（loopMIDI）
 ひとつだけ。`gui.exe` は入口と出口を**動かしたまま画面から選べる**ので、
-パネルの `MIDI IN A` のジャックを押すか、窓のどこかを右クリックする。
+パネルの `MIDI IN A` のジャックを押すか、右クリックして「設定」の「MIDI」を開く。
 
 入口は **A〜D の 4 口**（パート 1-16・17-32・33-48・49-64）。実機の HOST SELECT を
 USB にしたときと同じ形で起動するので、実機では USB でしか使えない C・D も使える。
@@ -164,7 +172,7 @@ MIDI ファイルは窓に落とすか `--play` で流せる。
 値も残る（実機の firmware がそう作ってある）。プラグイン（VST3・CLAP・AU）はここを**読むだけ**で、
 挿したときは gui / live で作った設定から始まる（プラグインの中で変えたものは DAW の
 プロジェクトに残る）。工場出荷状態に戻すには `--factory` を付けて起動するか、
-`gui` の窓を右クリックして「工場出荷状態に戻す」。ファイルを消しても同じ。
+`gui` の POWER メニューで「工場出荷状態に戻す」。ファイルを消しても同じ。
 
 画面の中身は [doc/gui.md](doc/gui.md)。3 面ある。
 **パネルの絵は作り直さずに直せる**。位置も色も `panel.txt` という文字
@@ -234,6 +242,24 @@ make install-vsti   VSTI_INSTALL（既定は Program Files/VstPlugins）へ複�
 
 **macOS**（Apple silicon）では VST3 と Audio Unit（AUv2、`aumu`）が作れる。
 `make` で道具と両方のバンドルができる。くわしくは [doc/porting-macos.md](doc/porting-macos.md)。
+
+## スタンドアロンの設定
+
+ツールバー、各クイックメニュー、または `--settings` で **設定** を開く。
+一般では日本語と英語を切り替える。音声では再生・録音デバイス、サンプルレート、
+バッファー、待ち時間、出力チャンネル、リサンプラー、音量、DC 除去、
+ピーク制限を選べる。変更は即座に反映し、失敗した変更は前の設定に戻る。
+デバイスの一覧は自動で更新する。
+
+エミュレーションには C++ エフェクト、firmware バイパス、MIDI ファイルの
+軽量化がある。各項目にマウスを重ねると説明が出る。
+既存の WASAPI・CoreAudio・ALSA を使い、DAC や回路のシミュレーションは追加しない。
+
+Windows は `make ASIO=1`、または CMake の `-DASIO=ON` で DirectSound とインストール済み ASIO ドライバーも使える。
+音声設定にドライバー選択と ASIO コントロールパネルのボタンを追加する。
+このビルドだけ CMake 3.18 以降が必要で、ASIO SDK を取得する。
+既定のビルドは PortAudio も SDK も使わない。
+詳しくは [ビルド手順](third_party/portaudio/S-MU2000.md) を参照。
 
 ## 待ち時間
 

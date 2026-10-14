@@ -71,8 +71,13 @@ namespace {
 // ---- このプラグインを表す番号。一度決めたら変えられない
 //      （変えるとホストが別物とみなし、保存した曲から見つからなくなる）
 static const FUID kProcessorUID(0x5D2E4B70, 0xA1C34F92, 0x8B0E7A61, 0x4D553000);
+// 同じ本体を**エフェクトとして**も名乗る（issue #191）。オーディオトラックのエフェクトの枠に挿せて、
+// トラックの音が A/D INPUT に入る。中身は同じで、違うのは分類（Fx）と、音声入力がメインのバスに
+// なることと、挿した直後に A/D パートが鳴るようにしておくこと（engine::want_ad_through）
+static const FUID kFxProcessorUID(0x5D2E4B70, 0xA1C34F92, 0x8B0E7A61, 0x4D553046);
 
 constexpr const char *kPlugName   = "S-MU2000";
+constexpr const char *kFxPlugName = "S-MU2000 FX";
 constexpr const char *kVendor     = "tarboh";
 constexpr const char *kVersion    = "0.1.0.0";
 
@@ -227,8 +232,10 @@ class mu_plugin : public IComponent, public IAudioProcessor,
                   public IEditController, public IMidiMapping, public IUnitInfo
 {
 public:
-	mu_plugin()
+	explicit mu_plugin(bool fx = false) : m_fx(fx)
 	{
+		if (m_fx)
+			m_engine.want_ad_through();
 		for (int32 i = 0; i < kPorts * kMidiParams; i++)
 			m_value[i] = default_of(i % kCtrlCount);
 		m_engine.panel().set_gain(1.0f);
@@ -350,14 +357,15 @@ public:
 			bus.flags   = BusInfo::kDefaultActive;
 			return kResultOk;
 		}
-		// A/D INPUT。サンプリングで録る音。補助の入力（サイドチェーン）として出す
+		// A/D INPUT。サンプリングで録る音。補助の入力（サイドチェーン）として出す。
+		// エフェクトとして挿したとき（m_fx）はメインの入力で、トラックの音がそのまま入る
 		if (type == kAudio && dir == kInput && index == 0) {
 			bus.mediaType    = kAudio;
 			bus.direction    = kInput;
 			bus.channelCount = 2;
 			set_str(bus.name, "A/D Input");
-			bus.busType = kAux;
-			bus.flags   = 0;
+			bus.busType = m_fx ? kMain : kAux;
+			bus.flags   = m_fx ? uint32(BusInfo::kDefaultActive) : 0;
 			return kResultOk;
 		}
 		if (type == kEvent && dir == kInput && index >= 0 && index < kPorts) {
@@ -493,6 +501,16 @@ public:
 					setup.clear();
 			}
 		}
+		// 版 5 から: パネルの A/D INPUT のつまみ。無ければ（前の版・起動中に保存された曲）等倍の位置
+		{
+			float ad_knob = ui::bridge::AD_KNOB_DEFAULT;
+			if (version >= 5) {
+				float v = 0;
+				if (stream->read(&v, sizeof(v), &got) == kResultOk && got == sizeof(v) && v >= 0.0f && v <= 1.0f)
+					ad_knob = v;
+			}
+			m_engine.panel().set_ad_knob(ad_knob);
+		}
 
 		// 起動が終わっていないと戻せない。終わるまで待つ
 		m_engine.wait_ready(3000);
@@ -521,7 +539,7 @@ public:
 		// 開き直しても、音色もエフェクトもそのまま戻る
 		if (!stream)
 			return kResultFalse;
-		int32 version = 4;
+		int32 version = 5;
 		float gain = m_engine.panel().gain();
 		m_engine.card_flush();   // プロジェクトを保存するときに、カードのファイルも揃える
 		int32 written = 0;
@@ -548,6 +566,9 @@ public:
 		stream->write(&sn, sizeof(sn), &written);
 		if (sn)
 			stream->write(const_cast<uint8_t *>(setup.data()), sn, &written);
+		// 版 5: パネルの A/D INPUT のつまみ（0〜1）
+		float ad_knob = m_engine.panel().ad_knob();
+		stream->write(&ad_knob, sizeof(ad_knob), &written);
 		return kResultOk;
 	}
 
@@ -1047,6 +1068,7 @@ private:
 	uint64                m_dropped = 0;       // 溜めきれずに捨てた MIDI（report で書く）
 	int64                 m_qpc_freq = 1;
 	int32                 m_refs = 1;
+	const bool            m_fx;                // エフェクトとして作られた（kFxProcessorUID）
 };
 
 
@@ -1313,31 +1335,32 @@ public:
 		return kResultOk;
 	}
 
-	int32 PLUGIN_API countClasses() override { return 1; }
+	// 0 = 音源（インストゥルメント）、1 = 同じ本体をエフェクトとして
+	int32 PLUGIN_API countClasses() override { return 2; }
 
 	tresult PLUGIN_API getClassInfo(int32 index, PClassInfo *info) override
 	{
-		if (index != 0 || !info)
+		if (index < 0 || index > 1 || !info)
 			return kInvalidArgument;
 		std::memset(static_cast<void *>(info), 0, sizeof(*info));
-		std::memcpy(info->cid, kProcessorUID.toTUID(), sizeof(TUID));
+		std::memcpy(info->cid, (index ? kFxProcessorUID : kProcessorUID).toTUID(), sizeof(TUID));
 		info->cardinality = PClassInfo::kManyInstances;
 		std::strncpy(info->category, kVstAudioEffectClass, PClassInfo::kCategorySize - 1);
-		std::strncpy(info->name, kPlugName, PClassInfo::kNameSize - 1);
+		std::strncpy(info->name, index ? kFxPlugName : kPlugName, PClassInfo::kNameSize - 1);
 		return kResultOk;
 	}
 
 	tresult PLUGIN_API getClassInfo2(int32 index, PClassInfo2 *info) override
 	{
-		if (index != 0 || !info)
+		if (index < 0 || index > 1 || !info)
 			return kInvalidArgument;
 		std::memset(static_cast<void *>(info), 0, sizeof(*info));
-		std::memcpy(info->cid, kProcessorUID.toTUID(), sizeof(TUID));
+		std::memcpy(info->cid, (index ? kFxProcessorUID : kProcessorUID).toTUID(), sizeof(TUID));
 		info->cardinality = PClassInfo::kManyInstances;
 		std::strncpy(info->category, kVstAudioEffectClass, PClassInfo::kCategorySize - 1);
-		std::strncpy(info->name, kPlugName, PClassInfo::kNameSize - 1);
+		std::strncpy(info->name, index ? kFxPlugName : kPlugName, PClassInfo::kNameSize - 1);
 		info->classFlags = 0;
-		std::strncpy(info->subCategories, PlugType::kInstrumentSynth,
+		std::strncpy(info->subCategories, index ? PlugType::kFx : PlugType::kInstrumentSynth,
 		             PClassInfo2::kSubCategoriesSize - 1);
 		std::strncpy(info->vendor, kVendor, PClassInfo2::kVendorSize - 1);
 		std::strncpy(info->version, kVersion, PClassInfo2::kVersionSize - 1);
@@ -1347,15 +1370,15 @@ public:
 
 	tresult PLUGIN_API getClassInfoUnicode(int32 index, PClassInfoW *info) override
 	{
-		if (index != 0 || !info)
+		if (index < 0 || index > 1 || !info)
 			return kInvalidArgument;
 		std::memset(static_cast<void *>(info), 0, sizeof(*info));
-		std::memcpy(info->cid, kProcessorUID.toTUID(), sizeof(TUID));
+		std::memcpy(info->cid, (index ? kFxProcessorUID : kProcessorUID).toTUID(), sizeof(TUID));
 		info->cardinality = PClassInfo::kManyInstances;
 		std::strncpy(info->category, kVstAudioEffectClass, PClassInfo::kCategorySize - 1);
-		set_str16(info->name, kPlugName, PClassInfo::kNameSize);
+		set_str16(info->name, index ? kFxPlugName : kPlugName, PClassInfo::kNameSize);
 		info->classFlags = 0;
-		std::strncpy(info->subCategories, PlugType::kInstrumentSynth,
+		std::strncpy(info->subCategories, index ? PlugType::kFx : PlugType::kInstrumentSynth,
 		             PClassInfo2::kSubCategoriesSize - 1);
 		set_str16(info->vendor, kVendor, PClassInfo2::kVendorSize);
 		set_str16(info->version, kVersion, PClassInfo2::kVersionSize);
@@ -1369,9 +1392,10 @@ public:
 	{
 		if (!cid || !_iid || !obj)
 			return kInvalidArgument;
-		if (!FUnknownPrivate::iidEqual(cid, kProcessorUID.toTUID()))
+		const bool fx = FUnknownPrivate::iidEqual(cid, kFxProcessorUID.toTUID());
+		if (!fx && !FUnknownPrivate::iidEqual(cid, kProcessorUID.toTUID()))
 			return kNoInterface;
-		mu_plugin *p = new mu_plugin;
+		mu_plugin *p = new mu_plugin(fx);
 		const tresult r = p->queryInterface(_iid, obj);
 		p->release();
 		return r;
@@ -1408,6 +1432,13 @@ SMTG_EXPORT_SYMBOL IPluginFactory *PLUGIN_API GetPluginFactory()
 	g_factory.addRef();
 	return &g_factory;
 }
+
+// PLUGIN_API is __stdcall only on 32-bit Windows, where the dllexport comes
+// out decorated as _GetPluginFactory@0 and hosts calling GetProcAddress("GetPluginFactory")
+// find nothing (x64 spells it plain). Alias the undecorated name onto it.
+#if defined(_MSC_VER) && defined(_M_IX86)
+#pragma comment(linker, "/EXPORT:GetPluginFactory=_GetPluginFactory@0")
+#endif
 
 #if defined(_WIN32)
 

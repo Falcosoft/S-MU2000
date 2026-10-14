@@ -13,6 +13,8 @@
 
 #pragma once
 
+#include "audio_preferences.h"
+#include "midi_routes.h"
 #include <algorithm>
 #include <cstdio>
 #include <cstdlib>
@@ -46,8 +48,10 @@ inline constexpr const char *SET_BOARD_FILE = "board_file";   // オリジナル
 inline constexpr const char *const SET_BOARD_FC[7] = { "board_fc", "board_fc2", "board_fc3", "board_fc4", "board_fc5", "board_fc6", "board_fc16" };
 // FC ボードの音色の値を動かすコントロールチェンジの番号（欄の順にコンマで。src/vboard.h の fc_cc_text。無ければ初期の番号）
 inline constexpr const char *SET_BOARD_FC_CC = "board_fc_cc";
+inline constexpr const char *SET_BOARD_HARM = "board_harm";   // ハーモニックボードの音色の組のファイル（道。src/ui/harm_banks.h。無ければ初期の音色）
 inline constexpr const char *SET_BOARD_FM = "board_fm";       // FM ボードの音色の組のファイル（道。src/ui/fm_banks.h。無ければ初期の音色）
 inline constexpr const char *SET_VOLUME = "volume";
+inline constexpr const char *SET_AD_KNOB = "ad_knob";   // the panel's A/D INPUT knob, 0-1
 inline constexpr const char *SET_EDIT_OUT = "edit_out";   // 音色の窓の送り先（空はパネルの設定）
 
 // The whole file as key/value pairs, in file order.
@@ -98,15 +102,21 @@ inline const std::string *find_setting(const settings_map &m, const char *key)
 // Everything gui.ini remembers, both directions. The two front ends keep
 // these in different shapes (globals vs members, partial vs full loads),
 // so each fills or reads one of these and collect()/apply() below do the
-// file mapping once. in[] has 4 entries, like SET_IN_KEYS (both front ends
-// run 4 MIDI ports).
+// file mapping once. The legacy in[]/out keys remain for migration and for
+// opening the same configuration with an older build.
 struct remembered {
+	midi_routing midi;
 	std::string in[IN_PORTS];
 	std::string out, out_b, out_mu;
 	std::string audio_out;
 	std::string audio_in;
+	audio_preferences audio;
+	std::vector<audio_channel_route> audio_routes;
+	bool limiter = false;
+	int native_fx = 0, native_engine = 0;
 	std::string card;
 	float volume = 1.0f;  // the panel's VOLUME knob
+	float ad_knob = 0.45f; // the panel's A/D INPUT knob (bridge::AD_KNOB_DEFAULT is unity)
 	bool fold34 = true;   // ports34=fold (MIDI file ports 3+4 onto A+B)
 	bool thin_bends = false; // thin_bends=1 (the player thins dense pitch bends)
 	bool analog = false;  // output=analog (DC removed)
@@ -118,9 +128,19 @@ struct remembered {
 	std::string board_dls; // board_dls= (the DLS file of the DLS board)
 	std::string board_file; // board_file= (the user's own board, board=user / user16)
 	std::string board_fm;   // board_fm= (the FM board's voice set; empty = the built-in voices)
+	std::string board_harm; // board_harm= (the harmonic board's voice set; empty = the built-in voices)
 	std::string board_fc[7]; // board_fc= board_fc2= ... board_fc6= board_fc16= (each FC board's voice set; empty = the built-in voices)
 	std::string board_fc_cc; // board_fc_cc= (control change numbers of the FC board's voice parameters; empty = the defaults)
 };
+
+// --nomidi keeps the profile but skips the saved processing choices.
+inline void clear_processing_settings(remembered &r)
+{
+	r.audio = {};
+	r.audio_routes.clear();
+	r.limiter = false;
+	r.native_fx = r.native_engine = 0;
+}
 
 // Struct to file rows, in file order
 inline settings_map collect_settings(const remembered &r)
@@ -131,25 +151,55 @@ inline settings_map collect_settings(const remembered &r)
 	kv.emplace_back(SET_OUT, r.out);
 	kv.emplace_back(SET_OUT_B, r.out_b);
 	kv.emplace_back(SET_OUT_MU, r.out_mu);
+	kv.emplace_back("midi_routes", "1");
+	for (int side = 0; side < 2; side++) {
+		const auto &routes = side ? r.midi.outputs : r.midi.inputs;
+		for (size_t i = 0; i < routes.size(); i++) {
+			const std::string prefix = std::string(side ? "midi_output_" : "midi_input_") + std::to_string(i);
+			kv.emplace_back(prefix + "_device", routes[i].device);
+			kv.emplace_back(prefix + "_ports", std::to_string(routes[i].ports));
+		}
+	}
 	kv.emplace_back(SET_AUDIO_OUT, r.audio_out);
 	kv.emplace_back(SET_AUDIO_IN, r.audio_in);
+	kv.emplace_back("audio_latency", std::to_string(r.audio.latency_ms));
+	kv.emplace_back("audio_exclusive", r.audio.exclusive ? "1" : "0");
+	kv.emplace_back("audio_resampler", std::to_string(int(r.audio.stream.quality)));
+	kv.emplace_back("audio_driver", std::to_string(int(r.audio.stream.driver)));
+	kv.emplace_back("audio_rate", std::to_string(r.audio.stream.sample_rate));
+	kv.emplace_back("audio_buffer", std::to_string(r.audio.stream.buffer_frames));
+	kv.emplace_back("audio_left", std::to_string(r.audio.stream.left));
+	kv.emplace_back("audio_right", std::to_string(r.audio.stream.right));
+	kv.emplace_back("output_limiter", r.limiter ? "1" : "0");
+	kv.emplace_back("native_fx", std::to_string(r.native_fx));
+	kv.emplace_back("native_engine", std::to_string(r.native_engine));
+	for (size_t i = 0; i < r.audio_routes.size(); i++) {
+		const auto &route = r.audio_routes[i];
+		const std::string prefix = "audio_route_" + std::to_string(i);
+		kv.emplace_back(prefix + "_device", route.device);
+		kv.emplace_back(prefix + "_driver", std::to_string(int(route.driver)));
+		kv.emplace_back(prefix + "_channels", std::to_string(route.left) + "," + std::to_string(route.right));
+	}
 	kv.emplace_back(SET_CARD, r.card);
 	char vol[32];
 	std::snprintf(vol, sizeof(vol), "%.3f", r.volume);
 	kv.emplace_back(SET_VOLUME, vol);
+	std::snprintf(vol, sizeof(vol), "%.3f", r.ad_knob);
+	kv.emplace_back(SET_AD_KNOB, vol);
 	kv.emplace_back(SET_PORTS34, r.fold34 ? "fold" : "drop");
 	kv.emplace_back(SET_THIN_BENDS, r.thin_bends ? "1" : "0");
 	kv.emplace_back(SET_OUTPUT, r.analog ? "analog" : "digital");
 	kv.emplace_back(SET_EDIT_OUT, r.edit_out);
-	static const char *const BOARD_KINDS[7] = { "", "fc", "fc16", "dls", "user", "user16", "fm16" };
-	kv.emplace_back(SET_BOARD, BOARD_KINDS[r.board >= 0 && r.board < 7 ? r.board : 0]);
+	static const char *const BOARD_KINDS[8] = { "", "fc", "fc16", "dls", "user", "user16", "fm16", "harm16" };
+	kv.emplace_back(SET_BOARD, BOARD_KINDS[r.board >= 0 && r.board < 8 ? r.board : 0]);
 	for (int i = 0; i < 5; i++) {
-		kv.emplace_back(SET_BOARD_MORE[i], BOARD_KINDS[r.board_more[i] >= 0 && r.board_more[i] < 7 ? r.board_more[i] : 0]);
+		kv.emplace_back(SET_BOARD_MORE[i], BOARD_KINDS[r.board_more[i] >= 0 && r.board_more[i] < 8 ? r.board_more[i] : 0]);
 		kv.emplace_back(SET_BOARD_MORE_PART[i], std::to_string(r.board_more_part[i]));
 	}
 	kv.emplace_back(SET_BOARD_DLS, r.board_dls);
 	kv.emplace_back(SET_BOARD_FILE, r.board_file);
 	kv.emplace_back(SET_BOARD_FM, r.board_fm);
+	kv.emplace_back(SET_BOARD_HARM, r.board_harm);
 	for (int i = 0; i < 7; i++)
 		kv.emplace_back(SET_BOARD_FC[i], r.board_fc[i]);
 	kv.emplace_back(SET_BOARD_FC_CC, r.board_fc_cc);
@@ -169,12 +219,67 @@ inline void apply_settings(const settings_map &kv, remembered &r)
 	if (const std::string *v = find_setting(kv, SET_OUT_MU))  r.out_mu  = *v;
 	if (const std::string *v = find_setting(kv, SET_AUDIO_OUT)) r.audio_out = *v;
 	if (const std::string *v = find_setting(kv, SET_AUDIO_IN))  r.audio_in  = *v;
+	const auto integer = [&](const char *key, int fallback, int min, int max) {
+		const auto *v = find_setting(kv, key);
+		if (!v || v->empty()) return fallback;
+		char *end = nullptr;
+		const long n = std::strtol(v->c_str(), &end, 10);
+		return end == v->c_str() || *end || n < min || n > max ? fallback : int(n);
+	};
+	r.midi = {};
+	if (find_setting(kv, "midi_routes")) {
+		for (int side = 0; side < 2; side++) {
+			auto &routes = side ? r.midi.outputs : r.midi.inputs;
+			for (const auto &[key, device] : kv) {
+				if (!key.starts_with(side ? "midi_output_" : "midi_input_") || !key.ends_with("_device")) continue;
+				const std::string ports = key.substr(0, key.size() - 7) + "_ports";
+				const unsigned mask = unsigned(integer(ports.c_str(), 0, 0, side ? 7 : 31));
+				set_midi_route(routes, device, midi_route_mask(routes, device) | mask);
+			}
+		}
+	} else {
+		// Migrate single-device settings without losing shared destinations.
+		for (int p = 0; p < IN_PORTS; p++) set_midi_route(r.midi.inputs, r.in[p], midi_route_mask(r.midi.inputs, r.in[p]) | (1u << p));
+		const std::string names[] = {r.out, r.out_b, r.out_mu};
+		for (int p = 0; p < 3; p++) set_midi_route(r.midi.outputs, names[p], midi_route_mask(r.midi.outputs, names[p]) | (1u << p));
+	}
+	r.audio.latency_ms = integer("audio_latency", r.audio.latency_ms, 0, 200);
+	r.audio.exclusive = integer("audio_exclusive", 0, 0, 1) != 0;
+	r.audio.stream.quality = resampler_quality(integer("audio_resampler", 0, 0, 2));
+	r.audio.stream.driver = audio_driver(integer("audio_driver", 0, 0, 2));
+	const bool unsupported_driver = !supported_audio_driver(r.audio.stream.driver);
+	if (unsupported_driver) r.audio.stream.driver = audio_driver::native;
+	r.audio.stream.sample_rate = integer("audio_rate", 0, 0, 192000);
+	if (r.audio.stream.sample_rate && r.audio.stream.sample_rate < 8000) r.audio.stream.sample_rate = 0;
+	r.audio.stream.buffer_frames = integer("audio_buffer", 0, 0, 8192);
+	r.audio.stream.left = integer("audio_left", 0, 0, 63);
+	r.audio.stream.right = integer("audio_right", 1, 0, 63);
+	if (r.audio.stream.left == r.audio.stream.right) { r.audio.stream.left = 0; r.audio.stream.right = 1; }
+	if (unsupported_driver) {
+		r.audio_out.clear();
+		r.audio.stream.sample_rate = r.audio.stream.buffer_frames = 0;
+		r.audio.stream.left = 0; r.audio.stream.right = 1;
+		r.audio.exclusive = false;
+	}
+	r.limiter = integer("output_limiter", 0, 0, 1) != 0;
+	r.native_fx = integer("native_fx", 0, 0, 2);
+	r.native_engine = integer("native_engine", 0, 0, 1);
+	r.audio_routes.clear();
+	for (const auto &[key, device] : kv) {
+		if (!key.starts_with("audio_route_") || !key.ends_with("_device")) continue;
+		const std::string channels_key = key.substr(0, key.size() - 7) + "_channels";
+		const auto *v = find_setting(kv, channels_key.c_str());
+		int left = 0, right = 1;
+		if (v && std::sscanf(v->c_str(), "%d,%d", &left, &right) == 2 &&
+		    left >= 0 && right >= 0 && left < 64 && right < 64 && left != right)
+			r.audio_routes.push_back({device, left, right, audio_driver(integer((key.substr(0, key.size() - 7) + "_driver").c_str(), 0, 0, 2))});
+	}
 	if (const std::string *v = find_setting(kv, SET_CARD))    r.card    = *v;
 	if (const std::string *v = find_setting(kv, SET_PORTS34)) r.fold34  = *v != "drop";
 	if (const std::string *v = find_setting(kv, SET_THIN_BENDS)) r.thin_bends = *v == "1";
 	if (const std::string *v = find_setting(kv, SET_OUTPUT))  r.analog  = *v == "analog";
 	if (const std::string *v = find_setting(kv, SET_EDIT_OUT)) r.edit_out = *v;
-	const auto board_kind = [](const std::string &v) { return v == "fc" ? 1 : v == "fc16" ? 2 : v == "dls" ? 3 : v == "user" ? 4 : v == "user16" ? 5 : v == "fm16" ? 6 : 0; };
+	const auto board_kind = [](const std::string &v) { return v == "fc" ? 1 : v == "fc16" ? 2 : v == "dls" ? 3 : v == "user" ? 4 : v == "user16" ? 5 : v == "fm16" ? 6 : v == "harm16" ? 7 : 0; };
 	if (const std::string *v = find_setting(kv, SET_BOARD))   r.board = board_kind(*v);
 	for (int i = 0; i < 5; i++) {
 		if (const std::string *v = find_setting(kv, SET_BOARD_MORE[i])) r.board_more[i] = board_kind(*v);
@@ -186,6 +291,7 @@ inline void apply_settings(const settings_map &kv, remembered &r)
 	if (const std::string *v = find_setting(kv, SET_BOARD_DLS)) r.board_dls = *v;
 	if (const std::string *v = find_setting(kv, SET_BOARD_FILE)) r.board_file = *v;
 	if (const std::string *v = find_setting(kv, SET_BOARD_FM)) r.board_fm = *v;
+	if (const std::string *v = find_setting(kv, SET_BOARD_HARM)) r.board_harm = *v;
 	for (int i = 0; i < 7; i++)
 		if (const std::string *v = find_setting(kv, SET_BOARD_FC[i])) r.board_fc[i] = *v;
 	if (const std::string *v = find_setting(kv, SET_BOARD_FC_CC)) r.board_fc_cc = *v;
@@ -196,6 +302,10 @@ inline void apply_settings(const settings_map &kv, remembered &r)
 	if (const std::string *v = find_setting(kv, SET_VOLUME)) {
 		if (!v->empty())
 			r.volume = std::clamp(float(std::atof(v->c_str())), 0.0f, 1.0f);
+	}
+	if (const std::string *v = find_setting(kv, SET_AD_KNOB)) {
+		if (!v->empty())
+			r.ad_knob = std::clamp(float(std::atof(v->c_str())), 0.0f, 1.0f);
 	}
 }
 

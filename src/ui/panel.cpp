@@ -471,7 +471,6 @@ void panel::resize(int w, int h)
 	m_adgain = scale(m_lay.adgain[0] - m_lay.adgain[2], m_lay.adgain[1] - m_lay.adgain[2],
 	                 m_lay.adgain[2] * 2, m_lay.adgain[2] * 2);
 	m_status = scale(20, 372, 700, 13);
-	m_hint   = scale(20, 386, 700, 13);
 	m_wheel  = scale(m_lay.dial[0] - m_lay.dial[2], m_lay.dial[1] - m_lay.dial[2],
 	                 m_lay.dial[2] * 2, m_lay.dial[2] * 2);
 	for (int i = 0; i < 6; i++)
@@ -1030,21 +1029,25 @@ void panel::draw_lcd_body(lcd_canvas &cv, const snapshot &s, const lcd_geom &g,
 	for (int i = 0; i < 3; i++)
 		cell(1, TOP_COLS + i, lx(LOW_BANK) + i * (CELL_W + 1) * ld, sy, ld);
 
-	// 楽器のかたち。20-22 桁の両行が 1 枚の絵。**23 桁目は絵ではない**ので入れない。
+	// 楽器のかたち。**16 列 × 16 行**で、20-22 桁の両行（5 点 × 3 マス ＝ 15 列）に、
+	// **23 桁目のいちばん左の列（bit4）**が 16 列目として続く（issue #192。実機の写真で確かめた。
+	// ROM の絵は 16 ビット幅で、firmware は最下位ビットをここへ書いている）。23 桁目の残りの 4 列は
+	// 絵ではなく、下の決まった形のセグメントの点け消し。
 	// 点は横長で、文字の点と同じくほんのわずかに隙間がある
 	{
 		const int ix = lx(LOW_ICON), iw = lw(LOW_ICON);
-		const int first = TOP_COLS + 3, last = LCD_COLS - 1;   // 20-22
-		const int nx = (last - first) * CELL_W, ny = LCD_ROWS * CELL_H;
+		const int first = TOP_COLS + 3, last = LCD_COLS - 1;   // 20-22、そのあとに 23 桁目の 1 列
+		const int nx = (last - first) * CELL_W + 1, ny = LCD_ROWS * CELL_H;
 		// ここの除算は整数のまま。reference も k 倍の座標で割ってから描く
 		for (int row = 0; row < LCD_ROWS; row++)
-			for (int col = first; col < last; col++) {
+			for (int col = first; col <= last; col++) {
 				const u8 *c = s.dots + (row * LCD_COLS + col) * CELL_H;
+				const int cols = col == last ? 1 : CELL_W;
 				for (int y = 0; y < CELL_H; y++) {
 					const int yy = row * CELL_H + y;
 					const int top = sy + yy * seg_h / ny;
 					const int bot = sy + (yy + 1) * seg_h / ny;
-					for (int x = 0; x < CELL_W; x++) {
+					for (int x = 0; x < cols; x++) {
 						const int xx = (col - first) * CELL_W + x;
 						const int left  = ix + xx * iw / nx;
 						const int right = ix + (xx + 1) * iw / nx;
@@ -1293,7 +1296,7 @@ void panel::draw_wheel(ImDrawList *dl, int angle) const
 	         std::max(1, int(m_scale)));
 }
 
-// A/D INPUT のつまみ。panel.txt に adgain があるときだけ。回るだけで、まだ何にも効かない
+// A/D INPUT のつまみ。panel.txt に adgain があるときだけ。A/D INPUT に入る音の大きさ（bridge::ad_gain）
 void panel::draw_adgain(ImDrawList *dl) const
 {
 	if (m_lay.adgain[2] <= 0 || !m_lay.adgain_art)
@@ -1572,10 +1575,6 @@ void panel::paint_front(ImDrawList *dl, const snapshot &s, u64 pressed, double v
 	if (status && status[0])
 		im::text_in(dl, im::pos_of(m_status), im::size_of(m_status), status,
 		            PANEL_INK, m_fonts.small, m_fonts.small_px, false, true, false);
-	im::text_in(dl, im::pos_of(m_hint), im::size_of(m_hint),
-	            UI_TEXT(hint_front, "Turn the big dial with the wheel / click buttons / "
-	                                "keys: A=PLAY E=EDIT U=UTIL F=EFFECT [ ]=PART"),
-	            RGB(120, 124, 130), m_fonts.small, m_fonts.small_px, false, true, false);
 
 	draw_tabs(dl);
 }

@@ -79,6 +79,7 @@ inline bool consume_output_option(char **argv, int argc, int &i, output_options 
 // Startup flags shared by the two graphical front ends (gui, gui_mac).
 // live/render have no windows, so these stay out of engine_options.
 struct window_options {
+	bool open_settings = false;
 	bool open_editor = false;
 	bool open_list = false;
 	bool open_fx = false;
@@ -87,12 +88,14 @@ struct window_options {
 	bool open_sampling = false;
 	bool open_player = false;     // MIDI プレイヤーの窓（gui だけ）
 	bool open_board = false;      // プラグインボードの窓（gui だけ）
+	bool open_keyboard = false;   // 鍵盤の窓（gui だけ）
 	bool lcd_only = false;   // the LCD on its own
 };
 
 // Takes a single argv entry. True when it was a shared window flag.
 inline bool consume_window_option(const char *arg, window_options &o)
 {
+	if (!std::strcmp(arg, "--settings")) { o.open_settings = true; return true; }
 	if (!std::strcmp(arg, "--editor")) { o.open_editor = true; return true; }
 	if (!std::strcmp(arg, "--list-window")) { o.open_list = true; return true; }
 	if (!std::strcmp(arg, "--fx-window")) { o.open_fx = true; return true; }
@@ -101,6 +104,7 @@ inline bool consume_window_option(const char *arg, window_options &o)
 	if (!std::strcmp(arg, "--sampling-window")) { o.open_sampling = true; return true; }
 	if (!std::strcmp(arg, "--player-window")) { o.open_player = true; return true; }
 	if (!std::strcmp(arg, "--board-window")) { o.open_board = true; return true; }
+	if (!std::strcmp(arg, "--keyboard-window")) { o.open_keyboard = true; return true; }
 	if (!std::strcmp(arg, "--lcd")) { o.lcd_only = true; return true; }
 	return false;
 }

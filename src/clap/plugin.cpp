@@ -54,6 +54,30 @@ const char *const kFeatures[] = {
 	nullptr,
 };
 
+// 同じ本体を**エフェクトとして**も名乗る（issue #191。VST3 の「S-MU2000 FX」と同じ）。音声入力がメインの口に
+// なり、挿した直後に A/D パートが鳴るようにしてある（engine::want_ad_through）
+constexpr const char *kFxPlugId = "io.github.tarboh.s-mu2000.fx";
+
+const char *const kFxFeatures[] = {
+	CLAP_PLUGIN_FEATURE_AUDIO_EFFECT,
+	CLAP_PLUGIN_FEATURE_MULTI_EFFECTS,
+	CLAP_PLUGIN_FEATURE_STEREO,
+	nullptr,
+};
+
+const clap_plugin_descriptor_t kFxDescriptor = {
+	CLAP_VERSION_INIT,
+	kFxPlugId,
+	"S-MU2000 FX",
+	"tarboh",
+	"https://github.com/tarboh/S-MU2000",
+	"https://github.com/tarboh/S-MU2000",
+	"https://github.com/tarboh/S-MU2000/issues",
+	"0.1.0",
+	"Yamaha MU2000 emulation, as an effect on its A/D input",
+	kFxFeatures,
+};
+
 const clap_plugin_descriptor_t kDescriptor = {
 	CLAP_VERSION_INIT,
 	kPlugId,
@@ -120,9 +144,11 @@ using smu2000::vst3::midi_length;
 class mu_plugin
 {
 public:
-	explicit mu_plugin(const clap_host_t *host) : m_host(host)
+	explicit mu_plugin(const clap_host_t *host, bool fx = false) : m_host(host), m_fx(fx)
 	{
-		m_plugin.desc = &kDescriptor;
+		m_plugin.desc = m_fx ? &kFxDescriptor : &kDescriptor;
+		if (m_fx)
+			m_engine.want_ad_through();
 		m_plugin.plugin_data = this;
 		m_plugin.init             = [](const clap_plugin *p) { return self(p)->init(); };
 		m_plugin.destroy          = [](const clap_plugin *p) { delete self(p); };
@@ -213,13 +239,14 @@ private:
 
 	static const clap_plugin_audio_ports_t s_audio_ports;
 
-	static bool audio_port(uint32_t index, bool is_input, clap_audio_port_info_t *info)
+	// fx: エフェクトとして作られた。音声入力がメインの口になる
+	static bool audio_port(uint32_t index, bool is_input, clap_audio_port_info_t *info, bool fx)
 	{
 		if (index != 0 || !info)
 			return false;
 		std::memset(info, 0, sizeof(*info));
 		info->id            = is_input ? 1 : 0;
-		info->flags         = is_input ? 0 : CLAP_AUDIO_PORT_IS_MAIN;
+		info->flags         = (!is_input || fx) ? CLAP_AUDIO_PORT_IS_MAIN : 0;
 		info->channel_count = 2;
 		info->port_type     = CLAP_PORT_STEREO;
 		info->in_place_pair = CLAP_INVALID_ID;
@@ -388,7 +415,7 @@ private:
 
 	bool save(const clap_ostream_t *s)
 	{
-		const int32_t version = 4;
+		const int32_t version = 5;
 		const float gain = m_engine.panel().gain();
 		m_engine.card_flush();   // プロジェクトを保存するときに、カードのファイルも揃える
 		if (!write_all(s, &version, sizeof(version)) || !write_all(s, &gain, sizeof(gain)))
@@ -408,7 +435,11 @@ private:
 		// 版 4: XG の値だけの控え（VST3 版と同じ）
 		const std::vector<uint8_t> setup = m_engine.save_xg_setup();
 		const int32_t sn = int32_t(setup.size());
-		return write_all(s, &sn, sizeof(sn)) && (!sn || write_all(s, setup.data(), setup.size()));
+		if (!write_all(s, &sn, sizeof(sn)) || (sn && !write_all(s, setup.data(), setup.size())))
+			return false;
+		// 版 5: パネルの A/D INPUT のつまみ（0〜1。VST3 版と同じ）
+		const float ad_knob = m_engine.panel().ad_knob();
+		return write_all(s, &ad_knob, sizeof(ad_knob));
 	}
 
 	bool load(const clap_istream_t *s)
@@ -452,6 +483,13 @@ private:
 				if (!read_all(s, setup.data(), setup.size()))
 					setup.clear();
 			}
+		}
+		// 版 5 から: パネルの A/D INPUT のつまみ。無ければ等倍の位置
+		{
+			float ad_knob = ui::bridge::AD_KNOB_DEFAULT, v = 0;
+			if (version >= 5 && read_all(s, &v, sizeof(v)) && v >= 0.0f && v <= 1.0f)
+				ad_knob = v;
+			m_engine.panel().set_ad_knob(ad_knob);
 		}
 
 		// 起動が終わっていないと戻せない。終わるまで待つ
@@ -517,6 +555,7 @@ private:
 
 	clap_plugin_t          m_plugin{};
 	const clap_host_t     *m_host = nullptr;
+	const bool             m_fx = false;        // エフェクトとして作られた（kFxPlugId）
 	const clap_host_params_t *m_host_params = nullptr;
 	engine                 m_engine;
 	autom::host            m_xg{m_engine};
@@ -679,8 +718,8 @@ private:
 
 const clap_plugin_audio_ports_t mu_plugin::s_audio_ports = {
 	[](const clap_plugin_t *, bool) -> uint32_t { return 1; },
-	[](const clap_plugin_t *, uint32_t index, bool is_input, clap_audio_port_info_t *info) {
-		return audio_port(index, is_input, info);
+	[](const clap_plugin_t *p, uint32_t index, bool is_input, clap_audio_port_info_t *info) {
+		return audio_port(index, is_input, info, self(p)->m_fx);
 	},
 };
 
@@ -986,14 +1025,18 @@ void mu_plugin::event(const clap_event_header_t *h)
 // ---- 工場
 
 const clap_plugin_factory_t g_factory = {
-	[](const clap_plugin_factory *) -> uint32_t { return 1; },
+	// 0 = 音源、1 = 同じ本体をエフェクトとして
+	[](const clap_plugin_factory *) -> uint32_t { return 2; },
 	[](const clap_plugin_factory *, uint32_t index) -> const clap_plugin_descriptor_t * {
-		return index == 0 ? &kDescriptor : nullptr;
+		return index == 0 ? &kDescriptor : index == 1 ? &kFxDescriptor : nullptr;
 	},
 	[](const clap_plugin_factory *, const clap_host_t *host, const char *id) -> const clap_plugin_t * {
-		if (!host || !id || std::strcmp(id, kPlugId) || !clap_version_is_compatible(host->clap_version))
+		if (!host || !id || !clap_version_is_compatible(host->clap_version))
 			return nullptr;
-		return (new mu_plugin(host))->plugin();
+		const bool fx = !std::strcmp(id, kFxPlugId);
+		if (!fx && std::strcmp(id, kPlugId))
+			return nullptr;
+		return (new mu_plugin(host, fx))->plugin();
 	},
 };
 

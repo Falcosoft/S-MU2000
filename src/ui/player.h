@@ -42,13 +42,21 @@ public:
 		std::string title;    // 曲名（ファイルに無ければ空）
 		double length = 0;    // 秒
 		int ports = 1;        // 使っている口の数
+		// 読み込んだ中身。path が空の曲（iOS のファイル選択、wasm）はこれが
+		// 唯一の持ち物で、path のある曲は高々ここで読み直す 위한 に使う
+		std::vector<smf::event> evs;
 	};
 
 	~player() { stop(); }
 
 	// ---- 前からの口（メニューの「MIDI ファイルを再生」、窓へ落としたファイル、--play）
-	// 一覧に足して（もうあればそれを）鳴らす。だめなら false（理由は err）
+	// 一覧に足して（もうあればそれを）鳴らす。だめなら false（原因は err）
 	bool start(const std::string &path, bridge &br, std::string &err);
+	// 中身がすでにメモリにあるときはこちら（iOS のファイル選択、wasm）。
+	// パス handed できないフロントエンドのための口で、読み込み以降は start() と同じ。
+	// name は状態行に出る名前なので外から渡す（iOS は選択したファイルの名前）
+	bool start_from_memory(const u8 *data, size_t size, const std::string &name,
+	                       bridge &br, std::string &err);
 	// 止めて、鳴りっぱなしを消す（一覧は残る）
 	void stop();
 	// 鳴らしているか（一時停止・追いかけ中も真）
@@ -70,9 +78,15 @@ public:
 	int current() const { return m_cur.load(std::memory_order_relaxed); }   // 鳴らしている（か選んでいる）曲。-1 = なし
 	// 足す（読めなければ false）。もう入っている道なら足さずに、その番号を返す
 	bool add(const std::string &path, std::string &err, int *index = nullptr);
+	// 中身がメモリにある曲を足す（path は空のまま evs を持つ）。読み込み以外は add と同じ
+	bool add_from_memory(const u8 *data, size_t size, const std::string &name,
+	                     std::string &err, int *index = nullptr);
 	void remove(int index);              // 鳴らしている曲を消したら止まる
 	void move(int from, int to);         // 並べ替え
 	void clear();                        // 止めて、全部消す
+	// 一覧が変わるたびに増える数（保存する側が、変わったかを見る）と、一覧の道だけ（中身がメモリにだけある曲は除く）
+	unsigned revision() const { return m_rev.load(std::memory_order_relaxed); }
+	std::vector<std::string> paths() const;
 
 	// ---- 操作
 	void play(int index, bridge &br);    // その曲を頭から
@@ -109,6 +123,7 @@ private:
 	std::atomic<bool>  m_playing{false};
 	std::atomic<int>   m_state{0};
 	std::atomic<int>   m_cur{-1};
+	std::atomic<unsigned> m_rev{0};    // revision()
 	std::atomic<int>   m_jump{-1};       // この番号の曲へ（-1 = なし）
 	std::atomic<int>   m_step{0};        // +1 = 次、-1 = 前
 	std::atomic<bool>  m_paused{false};

@@ -23,10 +23,10 @@
 #include "bridge.h"
 #include "driver.h"
 #include "midi_guard.h"
-#include "midi_in.h"
-#include "midi_out.h"
+#include "midi_router.h"
 #include "texts.h"
 #include "analog_out.h"
+#include "output_limiter.h"
 #include "mu2000.h"
 #include "bootcache.h"
 #include "nvram.h"
@@ -45,16 +45,7 @@ namespace ui {
 struct engine {
 	mu2000 mu;
 	bridge   &br;
-	midi_in  &midi;        // MIDI IN A（パート 1-16）
-	// B-D。B は実機の 2 つめの DIN、C・D は USB だけの口（パート 33-64）。
-	// [0] は使わない（midi が A）
-	midi_in  *midi_p[mu2000::MIDI_PORTS + 1] = {};   // 最後は口 E（マルチパートのプラグインボード）
-	midi_out *mout = nullptr;     // MIDI THRU A（A で受けたものを外へ）
-	midi_out *mout_b = nullptr;   // MIDI THRU B（B で受けたものを外へ）
-	midi_out *mout_edit = nullptr; // 音色の窓で選んだ送り先（Ctrl＋右クリックで送るもの）
-	// MIDI OUT。MU2000 が自分で送り出すもの（XG のダンプ要求への返事など）。
-	// これを loopMIDI 越しに外のエディタへ返すと、外から読み書きできる
-	midi_out *mout_mu = nullptr;
+	midi_router &midi;
 	audio_in *ain = nullptr;          // A/D INPUT に入れる音（無ければ無音）
 
 	std::atomic<int> state{0};        // 0 起動中 / 1 準備完了 / 2 だめ
@@ -67,6 +58,7 @@ struct engine {
 	bool use_nvram = false;           // 覚えている設定で起動するか（窓を出すときだけ）
 	// 音の出口。false = デジタル（S/PDIF と同じ。DPCM の直流も残る）、true = アナログ（直流を切る。analog_out.h）
 	std::atomic<bool> analog{false};
+	std::atomic<bool> limit_output{false};
 	// エフェクトを C++ で鳴らす軽量モード（doc/native-dsp.md）。0 切 / 1 / 2。
 	// 画面からはここへ頼むだけで、切り替えは音声の糸が fill() の頭で行う
 	std::atomic<int>  want_native_fx{-1};
@@ -80,7 +72,7 @@ struct engine {
 
 	driver drv;
 
-	engine(bridge &b, midi_in &m) : br(b), midi(m) {}
+	engine(bridge &b, midi_router &m) : br(b), midi(m) {}
 
 	bool load(const std::string &dir)
 	{
@@ -231,38 +223,22 @@ struct engine {
 
 		drv.apply_buttons(mu, br);
 		// 画面から出したものも、外の MIDI 出力へ流す（実機の THRU）
-		drv.pump_midi(mu, br, [this](u8 v) { if (mout && guard_a.pass(v)) mout->send(v); });
+		drv.pump_midi(mu, br, [this](u8 v) { if (guard_a.pass(v)) midi.send(0, v); });
 		// 音色の窓から外へ送るもの（音源には入れない）
 		br.drain_out([this](int dest, const std::vector<u8> &msg) {
-			midi_out *o = dest == 2 ? mout_edit : dest == 1 ? mout_b : mout;
-			if (o)
-				for (u8 v : msg)
-					o->send(v);
+			for (u8 v : msg) midi.send(dest == 2 ? 3 : dest, v);
 		});
 		drv.pump_wheel(mu, br);
 
-		u8 b;
-		while (midi.pop(b)) {
-			drv.watch(b, mu.midi_in(b, 0));
-			if (mout && guard_a.pass(b)) mout->send(b);
-		}
-		// B は実機の 2 つめの DIN（内蔵 SCI ch1）。パート 17-32 に届く。
-		// THRU も口ごとに分ける。A で受けたものは MIDI OUT A、
-		// B で受けたものは MIDI OUT B へ。混ぜると、外に繋いだ音源で
-		// パートの割り振りが崩れる
-		// C・D は実機では USB だけの口で、外へ出す THRU の端子も無い
-		for (int p = 1; p < mu2000::MIDI_PORTS; p++) {
-			if (!midi_p[p])
-				continue;
-			while (midi_p[p]->pop(b)) {
-				drv.watch(b, mu.midi_in(b, p));
-				if (p == 1 && mout_b && guard_b.pass(b)) mout_b->send(b);
+		midi.drain([this](int port, const u8 *bytes, size_t n) {
+			for (size_t i = 0; i < n; i++) {
+				const u8 b = bytes[i];
+				if (port == mu2000::MIDI_PORTS) mu.board_midi_in(b);
+				else drv.watch(b, mu.midi_in(b, port));
+				if (port == 0 && guard_a.pass(b)) midi.send(0, b);
+				if (port == 1 && guard_b.pass(b)) midi.send(1, b);
 			}
-		}
-		// 口 E。本体（firmware）には行かず、マルチパートのプラグインボードだけが聞く
-		if (midi_p[mu2000::MIDI_PORTS])
-			while (midi_p[mu2000::MIDI_PORTS]->pop(b))
-				mu.board_midi_in(b);
+		});
 
 		const float g = br.gain();
 		// アナログにした最初のブロックで、前に使ったときの状態を捨てる
@@ -270,12 +246,20 @@ struct engine {
 		if (to_analog && !m_analog_was)
 			m_dc.reset();
 		m_analog_was = to_analog;
+		const bool limit = limit_output.load(std::memory_order_relaxed);
+		if (!limit) m_limiter.reset();
 
+		const float ad_gain = br.ad_gain();
 		for (u32 i = 0; i < n; i++) {
 			s32 l = 0, r = 0;
 			if (ain) {
 				s32 a1, a2;
 				ain->pop(a1, a2);
+				// パネルの A/D INPUT のつまみ（等倍のときは触らない）
+				if (ad_gain != 1.0f) {
+					a1 = bridge::ad_scaled(a1, ad_gain);
+					a2 = bridge::ad_scaled(a2, ad_gain);
+				}
 				mu.set_audio_input(a1, a2);
 			}
 			mu.run_sample(l, r);
@@ -284,15 +268,23 @@ struct engine {
 				l = s32(std::lrint(m_dc.run(0, l)));
 				r = s32(std::lrint(m_dc.run(1, r)));
 			}
-			l = s32(l * g) * 32768 / mu2000::DAC_FULL_SCALE;
-			r = s32(r * g) * 32768 / mu2000::DAC_FULL_SCALE;
-			out[i * 2 + 0] = s16(l < -32768 ? -32768 : l > 32767 ? 32767 : l);
-			out[i * 2 + 1] = s16(r < -32768 ? -32768 : r > 32767 ? 32767 : r);
+			if (!limit) {
+				l = s32(l * g) * 32768 / mu2000::DAC_FULL_SCALE;
+				r = s32(r * g) * 32768 / mu2000::DAC_FULL_SCALE;
+				out[i * 2] = s16(std::clamp(l, -32768, 32767));
+				out[i * 2 + 1] = s16(std::clamp(r, -32768, 32767));
+				continue;
+			}
+			double lf = double(l) * g / mu2000::DAC_FULL_SCALE;
+			double rf = double(r) * g / mu2000::DAC_FULL_SCALE;
+			m_limiter.process(lf, rf, true);
+			out[i * 2] = s16(std::clamp(lf * 32768, -32768.0, 32767.0));
+			out[i * 2 + 1] = s16(std::clamp(rf * 32768, -32768.0, 32767.0));
 		}
 
 		// firmware が送り出したもの。画面（パラメータの層）と MIDI OUT の口へ。
 		// 出口が無くても取り出しておく（溜めを空ける）
-		drv.pump_out(mu, br, [this](u8 v) { if (mout_mu) mout_mu->send(v); });
+		drv.pump_out(mu, br, [this](u8 v) { midi.send(2, v); });
 
 		drv.publish(mu, br, n, AUDIO_RATE, true, nullptr);
 		in_fill.store(false);
@@ -300,6 +292,7 @@ struct engine {
 
 private:
 	smu2000::analog_out m_dc{ AUDIO_RATE };
+	output_limiter m_limiter;
 	bool m_analog_was = false;
 };
 

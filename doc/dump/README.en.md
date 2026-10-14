@@ -125,3 +125,50 @@ notice at the top).
 | [procedure.md](procedure.md) | Step-by-step for the MIDI route on the unit |
 | [rom-dump.md](rom-dump.md) | Reading the chips after desoldering (for reference) |
 | [hello.md](hello.md) | First steps, starting from lighting an LED |
+
+## Without changing the firmware
+
+The procedure above is fast, but it writes a dumper into the unit's firmware area. If you would rather
+not rewrite anything, shingo45endo's
+[mu-wave-romdumper](https://shingo45endo.github.io/mu-wave-romdumper/) does it another way (a separate
+project, MIT licence).
+
+| | The USB dumper here | mu-wave-romdumper (its MU2000 page) |
+|---|---|---|
+| Firmware rewrite | needed (put the stock one back afterwards) | **none** |
+| What you need | one USB cable | a MIDI interface, In and Out both connected |
+| Time | about 36 minutes (plus writing and restoring) | about 4 hours |
+| Tools | Python scripts and Yamaha's updater | a browser (Chrome, Edge, Firefox) |
+
+**How it works.** The MU2000 has undocumented SysEx messages (model 68H, see
+[sampling-ram.md](../sampling-ram.md)) that move samples between a PC and the sampling RAM. To their
+"write position" (in units of 64 bytes) the firmware adds the start of the sampling RAM, `0x01000000`,
+in 32-bit arithmetic, without checking the range. A large value wraps past zero and points into the wave
+ROM, which the SWP30 sees in the same address space. A request for "wave data" then returns it 64 bytes
+at a time. It only reads; nothing is written.
+
+**Checked in the emulator.** Sending the same two messages (set the position, ask for 64 bytes) to the
+stock firmware running in this emulator returns the wave ROM byte for byte at six places, including the
+start, the boundary between the two pairs of chips, and the end. Asking again without setting the
+position returns the next 64 bytes. `make test` checks this every time (the "wave ROM over SysEx" case
+in `samptest`). **It has not been tried on hardware here.**
+
+**How the files map.** Both are four files of 8 MB, the low and the high 16 bits of each 32-bit word, in
+little-endian order. Rename them, put them in `roms/dump/`, and check the hashes.
+
+| mu-wave-romdumper | the name S-MU2000 reads |
+|---|---|
+| `mu2000_wave_000_low.bin` | `xv364a0.ic49` |
+| `mu2000_wave_000_high.bin` | `xv365a0.ic50` |
+| `mu2000_wave_100_low.bin` | `xw848a0.ic53` |
+| `mu2000_wave_100_high.bin` | `xw849a0.ic54` |
+
+```bash
+python tools/dump/verify_roms.py roms/dump
+```
+
+This mapping comes from reading both descriptions side by side, not from running files dumped with that
+tool through the check. If the hashes do not match, do not use the files.
+
+On an MU2000 use **the MU2000 page**. The MU1000 page (which also works on an MU2000) uses a different
+undocumented SysEx that writes to the sound chip's registers directly, and is five times slower.

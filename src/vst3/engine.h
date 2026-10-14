@@ -109,6 +109,11 @@ public:
 	// 起動が終わるまで待つ。**DAW の本スレッドからだけ**呼ぶこと。
 	// 待ちきれずに時間切れなら false。始まっていなければ始めてから待つ
 	bool wait_ready(int ms);
+	// **電源を入れ直す**（パネルの POWER、架空のプラグインボードを挿した・外したとき。issue #197）。
+	// 設定（ワーク RAM）と挿したボードはそのまま持ち越す。実機の電源の入れ直しと同じで、firmware が
+	// ボードを探すところからやり直すので、挿したボードが UTIL → PLG に並ぶ。起動が済んでいるときだけ効き、
+	// 別スレッドで進めてすぐ返る。その間は「起動中」（音は無音、届いた MIDI は溜めて後から流す）
+	void restart();
 	// 止めておく・戻す。IPluginBase::terminate / initialize から（**音声スレッドが回っていないとき**）。
 	// park は起動を待ちきってから、スレーブの別スレッドを止める。この DLL のコードを走るスレッドを
 	// 残さないため（ホストが本体を手放さないまま DLL を外すと、残ったスレッドが消えたコードを走って落ちる）。
@@ -132,6 +137,11 @@ public:
 	// fill() が順番どおりに流す（issue #19）
 	// port は 0 が MIDI IN A（パート 1-16）、1 が B（17-32）、2 が C（33-48）、3 が D（49-64）
 	void midi(const uint8_t *bytes, size_t n, int port = 0);
+	// **エフェクトとして挿したとき用**（VST3・CLAP の「S-MU2000 FX」。issue #191）。A/D パートの音量は XG の
+	// 初期値が 0 なので、そのままでは入れた音が出てこない。起動し切った最初の区間で、AD1・AD2 の音量を 100、
+	// パンを左いっぱい・右いっぱいにする（ステレオの入力がステレオのまま通る）。ホストが状態を戻したら
+	// （load_state）その値が勝つので、これは新しく挿したときにだけ効く
+	void want_ad_through() { m_ad_through.store(true, std::memory_order_release); }
 	// オールサウンドオフ + オールノートオフを流す。mask は口ごとのチャンネルのビット
 	// （bit 0 が 1ch）で、ports 個ぶん並べて渡す。全チャンネルに流すと 1 口あたり
 	// 192 バイト＝31250bps で 61ms かかり、そのあとに続く音が丸ごと遅れるので、
@@ -230,6 +240,13 @@ public:
 	void notify_edit_raw(u32 addr, int size, int value);
 	void notify_idle(bool closing);
 
+	// The editor's width as the user last dragged it (0 = never). The view is
+	// made and thrown away with the host's window; this stays with the
+	// instance, so reopening the editor gives the size it was closed at.
+	// The height follows from the width (view.cpp keeps the panel's ratio)
+	int view_width() const { return m_view_w.load(std::memory_order_relaxed); }
+	void set_view_width(int w) { m_view_w.store(w, std::memory_order_relaxed); }
+
 	// ---- SmartMedia（前面のカードの差し込み口）
 	//
 	// カードの中身は PC のファイル（gui.exe と同じ .img）。firmware が書いたブロックは card_flush() で書き戻す。
@@ -257,6 +274,7 @@ private:
 	void silence_restored();       // 戻した状態で鳴っていた声を止める（m_machine を持って呼ぶ）
 	static bool load_state_allowed();   // plugin.ini の load_state（既定 1）
 	bool m_load_state_noted = false;
+	std::atomic<bool> m_ad_through{false};   // want_ad_through()。fill が 1 度だけ流す
 	// 機械まるごとの状態を戻す。読めなければ XG の値の控えを流す（m_machine を持って呼ぶ）
 	bool restore(const uint8_t *p, size_t n, const std::vector<uint8_t> &setup);
 	void one_sample(float &l, float &r);
@@ -264,6 +282,7 @@ private:
 
 	std::atomic<status> m_state{status::loading};
 	std::atomic<bool> m_processing{false};
+	std::atomic<int> m_view_w{0};          // see view_width()
 	std::vector<uint8_t> m_deferred_state;  // 起動が終わる前に来た状態（m_machine で守る）
 	std::vector<uint8_t> m_deferred_setup;  // 同じく、XG の値の控え
 	bool                 m_deferred = false;
@@ -277,6 +296,7 @@ private:
 	// 起動は 1 度だけ。start() が exchange で守る（2 度やると
 	// 動き中の機械 m_mu を丸ごと差し替えてしまう）
 	std::atomic<bool>   m_boot_once{false};
+	std::atomic<bool>   m_restarting{false};   // restart() が走っている
 	bool                m_threaded = true;   // plugin.ini の threaded（unpark で戻す）
 	bool                m_parked = false;
 	std::mutex          m_park_mutex;

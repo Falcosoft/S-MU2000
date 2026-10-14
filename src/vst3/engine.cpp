@@ -207,6 +207,63 @@ void engine::start()
 	m_thread = std::thread([this] { boot(); });
 }
 
+void engine::restart()
+{
+	std::lock_guard<std::mutex> park(m_park_mutex);
+	if (state() != status::ready || !m_mu || m_restarting.exchange(true, std::memory_order_acq_rel))
+		return;
+	// 前の起動（か、前の入れ直し）のスレッドはもう終わっている。片付けてから使い回す
+	if (m_thread.joinable())
+		m_thread.join();
+	m_thread = std::thread([this] {
+		{
+			// 機械を握っている間、音声スレッドは無音を返す（fill の try_lock）
+			std::lock_guard<std::mutex> lock(m_machine);
+			m_state.store(status::loading, std::memory_order_release);
+			ui::driver::publish_message(m_bridge, "MU2000 起動し直し中");
+			logf("電源を入れ直す（ボード %s）", m_mu->virtual_board_any() ? "あり" : "なし");
+			// firmware を走らせない口は、起動し切ってから入れ直す（起動の途中で細く回すと立ち上がりきらない）
+			const int native = m_mu->native_engine();
+			if (native)
+				m_mu->set_native_engine(0);
+			// 起動の写し（bootcache）は使わない。ボードを見つけるところ（Checking PLG）を firmware に通らせる
+			m_mu->reset();
+			const auto t0 = std::chrono::steady_clock::now();
+			const int64_t limit = int64_t(30.0 * NATIVE_RATE);
+			int64_t i = 0;
+			bool up = false;
+			for (; i < limit; i++) {
+				if (!(i & 4095) && m_abort.load(std::memory_order_relaxed))
+					break;
+				if (m_mu->midi_ready()) {
+					up = true;
+					break;
+				}
+				s32 l = 0, r = 0;
+				m_mu->run_sample(l, r);
+			}
+			if (m_abort.load(std::memory_order_relaxed)) {
+				m_restarting.store(false, std::memory_order_release);
+				return;                          // 外されるところ。状態は「起動中」のまま
+			}
+			if (!up) {
+				m_message = "MU2000 が起動しなかった";
+				logf("%s", m_message.c_str());
+				m_state.store(status::failed, std::memory_order_release);
+				m_restarting.store(false, std::memory_order_release);
+				return;
+			}
+			if (native)
+				m_mu->set_native_engine(native);
+			logf("入れ直し: 音 %.2f 秒ぶん / 実時間 %.2f 秒", double(i) / NATIVE_RATE,
+			     std::chrono::duration<double>(std::chrono::steady_clock::now() - t0).count());
+			m_state.store(status::ready, std::memory_order_release);
+			ui::driver::publish_now(*m_mu, m_bridge, true, nullptr);
+		}
+		m_restarting.store(false, std::memory_order_release);
+	});
+}
+
 bool engine::wait_ready(int ms)
 {
 	start();
@@ -499,7 +556,12 @@ void engine::one_sample(float &l, float &r)
 	s32 li = 0, ri = 0;
 	// A/D INPUT。溜めが空なら無音（入力の変換器の先読みの分だけ、頭が少し欠ける）
 	if (m_in_r != m_in_w) {
-		m_mu->set_audio_input(m_in_q[m_in_r * 2], m_in_q[m_in_r * 2 + 1]);
+		// パネルの A/D INPUT のつまみ（bridge::ad_gain。等倍のときは触らない）
+		const float g = m_bridge.ad_gain();
+		if (g != 1.0f)
+			m_mu->set_audio_input(ui::bridge::ad_scaled(m_in_q[m_in_r * 2], g), ui::bridge::ad_scaled(m_in_q[m_in_r * 2 + 1], g));
+		else
+			m_mu->set_audio_input(m_in_q[m_in_r * 2], m_in_q[m_in_r * 2 + 1]);
 		m_in_r = (m_in_r + 1) & IN_MASK;
 	} else {
 		m_mu->set_audio_input(0, 0);
@@ -628,6 +690,20 @@ void engine::fill(float *left, float *right, int n, const float *in_l, const flo
 	}
 	push_input(in_l, in_r, n);
 	apply_deferred_state();
+	// エフェクトとして挿された直後に 1 度だけ: A/D パートを鳴るようにする（engine.h の want_ad_through）。
+	// XG の A/D パート 10 0n: 0B = 音量、0E = パン（1 = 左いっぱい、127 = 右いっぱい）
+	if (m_ad_through.load(std::memory_order_acquire) && m_ad_through.exchange(false)) {
+		static const u8 setup[4][9] = {
+			{ 0xf0, 0x43, 0x10, 0x4c, 0x10, 0x00, 0x0b, 100, 0xf7 },
+			{ 0xf0, 0x43, 0x10, 0x4c, 0x10, 0x01, 0x0b, 100, 0xf7 },
+			{ 0xf0, 0x43, 0x10, 0x4c, 0x10, 0x00, 0x0e, 1, 0xf7 },
+			{ 0xf0, 0x43, 0x10, 0x4c, 0x10, 0x01, 0x0e, 127, 0xf7 },
+		};
+		for (const auto &m : setup)
+			for (u8 b : m)
+				m_mu->midi_in(b, 0);
+		log_line("エフェクトとして挿された: A/D パート 1・2 の音量を 100、パンを左右にした");
+	}
 	// **口の入切はここで**（gui.exe の ui/engine.h と同じ場所）
 	if (const int want = m_want_native.exchange(-1); want >= 0) {
 		m_mu->set_native_engine(want);
@@ -833,6 +909,8 @@ bool engine::load_state(const uint8_t *p, size_t n, const uint8_t *setup, size_t
 		}
 		return true;
 	}
+	// 戻す状態があるなら、それが A/D パートの値も持っている。挿したときの初期設定は入れない
+	m_ad_through.store(false, std::memory_order_release);
 	std::lock_guard<std::mutex> lock(m_machine);
 	if (state() == status::failed)
 		return false;

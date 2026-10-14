@@ -18,5 +18,21 @@
 	"ply_add": "Add files...",
 	"ply_clear": "Clear the list",
 	"ply_path": "Path of a MIDI file",
-	"ply_add_path": "Add"
+	"ply_add_path": "Add",
+	"ply_list_empty": "No songs in that playlist: ",
+	// Keyboard window (keyboard_view.h, issue #212)
+	"kb_port": "Port",
+	"kb_port_tip": "Port\nWhich MIDI input of the unit the keys play into. A is the front MIDI IN A, where a keyboard was traditionally plugged in. C and D exist on USB only (parts 33-64).",
+	"kb_channel": "Channel",
+	"kb_fixed": "Fixed velocity",
+	"kb_fixed_tip": "Fixed velocity\nOff: the lower on the key you press, the louder (as on the other keyboards). On: every key plays at the velocity set here.",
+	"kb_velocity_fmt": "velocity %d",
+	"kb_octave_tip": "Octave\nMoves the keyboard by an octave. The name is its lowest key (Yamaha's naming: middle C = C3). PageUp / PageDown do the same from the PC keyboard.",
+	"kb_sustain": "Sustain",
+	"kb_all_off": "All notes off",
+	"kb_bend": "Bend",
+	"kb_bend_tip": "Pitch bend\nDrag up or down; it springs back to the middle when released.",
+	"kb_mod": "Mod",
+	"kb_mod_tip": "Modulation wheel (controller 1)\nStays where you leave it.",
+	"kb_keys_tip": "Press a key to play it; slide to move to the next key. Lower on the key is louder (unless Fixed velocity is on).\nPC keyboard plays too, white keys only: the A row from the lowest C, the Q row an octave up, the number row another octave up. Hold Z to flatten or X to sharpen what you play. PageUp / PageDown move the octave."
 }

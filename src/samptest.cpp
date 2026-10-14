@@ -10,6 +10,7 @@
 // REC の InputSrc（AD2 / AD1+2）で録るものが変わるかを見る。
 // 食い違えば 1 を返す。
 #include "mu2000.h"
+#include "harm_analyze.h"
 #include "ui/bridge.h"
 #include "ui/driver.h"
 #include "wav_in.h"
@@ -19,6 +20,7 @@
 #include "ui/panel_macro.h"
 #include "xg/wave_catalog.h"
 
+#include <chrono>
 #include <filesystem>
 #include <fstream>
 #include <cmath>
@@ -42,6 +44,7 @@ struct rig {
 	std::vector<double> out;        // 集めている間の出力（左右の平均）
 	double sum_l = 0, sum_r = 0;    // 集めている間の左・右の二乗の和（パンを見る）
 	bool collect = false;
+	std::vector<u8> *midi_tap = nullptr;   // 置いてあれば、音源が MIDI OUT から出したものをここへ集める
 
 	void pump(u32 ms)
 	{
@@ -53,7 +56,9 @@ struct rig {
 			s32 l, r;
 			mu.run_sample(l, r);
 			u8 b;
-			while (mu.midi_out_take(b)) {}
+			while (mu.midi_out_take(b))
+				if (midi_tap)
+					midi_tap->push_back(b);
 			if (collect) {
 				out.push_back((double(l) + double(r)) * 0.5 / mu2000::DAC_FULL_SCALE);
 				sum_l += (double(l) / mu2000::DAC_FULL_SCALE) * (double(l) / mu2000::DAC_FULL_SCALE);
@@ -888,6 +893,170 @@ static smu2000::voicelib::item g_lib_item;      // ライブラリの確かめ�
 			      "サンプル音色の SysEx で写す",
 			      std::to_string(msgs.size()) + " 通 " + std::to_string(bytes) + " バイト、違う " + std::to_string(differ) + " バイト");
 
+			// 波形 ROM を SysEx で読む（機種 0x68。shingo45endo さんの mu-wave-romdumper が見つけた道）。
+			// 「サンプリングの書き込み位置」（番地 00 00 00、64 バイト単位の 28 ビット）に firmware はサンプリング RAM の頭
+			// 0x01000000 を 32 ビットで足し、範囲を見ない。0x0FF00000 + n を置くと足し算があふれて、波形 ROM の
+			// 32 ビット語 16n 個目を指す。そこへ「波形データ」（番地 00 01 00）を頼むと 64 バイトが 74 バイトに詰めて返り、
+			// 位置は 64 バイト進む。firmware が SWP30 の波形の直接読み出しを自分で回すので、エミュのその道の試験にもなる。
+			// 位置は書くだけで、読み返す要求には firmware が答えない。終わったら 0 に置いておく（サンプルを送る側は、
+			// 送る前に必ず自分で位置を置く）
+			{
+				std::vector<u8> got;
+				auto ask = [&](const std::vector<u8> &msg, u32 ms) {
+					got.clear();
+					k.midi_tap = &got;
+					for (u8 b : msg)
+						k.mu.midi_in(b, 0);
+					k.pump(ms);
+					k.midi_tap = nullptr;
+				};
+				auto bulk = [](const std::vector<u8> &addr_and_data) {
+					std::vector<u8> body = { u8(((addr_and_data.size() - 3) >> 7) & 0x7f), u8((addr_and_data.size() - 3) & 0x7f) };
+					body.insert(body.end(), addr_and_data.begin(), addr_and_data.end());
+					int sum = 0;
+					for (u8 b : body)
+						sum += b;
+					std::vector<u8> msg = { 0xf0, 0x43, 0x00, 0x68 };
+					msg.insert(msg.end(), body.begin(), body.end());
+					msg.push_back(u8((-sum) & 0x7f));
+					msg.push_back(0xf7);
+					return msg;
+				};
+				// 返ってきた 1 通（F0 43 0n 68 長さ 2 番地 3 中身 74 和 F7）を、ROM の絵と同じ並び（32 ビット語のリトルエンディアン）の 64 バイトにする
+				auto unpack = [&](u8 *le) {
+					if (got.size() != 4 + 2 + 3 + 74 + 2 || got[0] != 0xf0 || got[3] != 0x68 || got[6] != 0x00 || got[7] != 0x01 || got[8] != 0x00)
+						return false;
+					const u8 *p = got.data() + 9;
+					u8 raw[64];
+					for (int g = 0; g < 9; g++)
+						for (int i = 0; i < 7; i++)
+							raw[g * 7 + i] = u8(p[g * 8 + i] | ((p[g * 8 + 7] & (0x40 >> i)) ? 0x80 : 0));
+					raw[63] = u8(p[72] | ((p[73] & 1) ? 0x80 : 0));
+					// 語ごとに「下の 16 ビット・上の 16 ビット」の順で、それぞれビッグエンディアン
+					for (int i = 0; i < 64; i += 2) {
+						le[i] = raw[i + 1];
+						le[i + 1] = raw[i];
+					}
+					return true;
+				};
+				const std::vector<u8> ask_block = { 0xf0, 0x43, 0x20, 0x68, 0x00, 0x01, 0x00, 0xf7 };
+				const auto rom = k.mu.wave_rom();
+				// ROM は 0x800000 語。頭、1 組目のチップの終わり、2 組目の頭、途中、終わり
+				const u32 where[] = { 0x000000, 0x012340, 0x3ffff0, 0x400000, 0x567890, 0x7ffff0 };
+				int read = 0, wrong = 0, next_wrong = -1;
+				for (u32 dword : where) {
+					const u32 pos = (0x0ff00000 + dword / 16) & 0x0fffffff;
+					ask(bulk({ 0x00, 0x00, 0x00, u8((pos >> 21) & 0x7f), u8((pos >> 14) & 0x7f), u8((pos >> 7) & 0x7f), u8(pos & 0x7f) }), 100);
+					ask(ask_block, 400);
+					u8 le[64];
+					if (!unpack(le)) {
+						wrong++;
+						continue;
+					}
+					read++;
+					wrong += std::memcmp(le, rom->data() + size_t(dword) * 4, 64) != 0;
+					// 位置を置き直さずにもう 1 度頼むと、次の 64 バイトが返る
+					if (dword == 0x012340) {
+						ask(ask_block, 400);
+						next_wrong = !unpack(le) || std::memcmp(le, rom->data() + size_t(dword + 16) * 4, 64) != 0;
+					}
+				}
+				ask(bulk({ 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00 }), 100);   // 位置を 0 に
+				check(read == 6 && wrong == 0 && next_wrong == 0, "波形 ROM を SysEx で読む（書き込み位置のあふれ）",
+				      "読めた " + std::to_string(read) + "/6 か所、ROM と違う " + std::to_string(wrong) + "、続けて読んだ次の 64 バイト " +
+				      (next_wrong == 0 ? "一致" : "違う"));
+			}
+
+			// サンプルのドラムキットを SysEx で作る（機種 0x68 の AH 30〜34。番地は公式のエディタの定義から。doc/sampling-ram.md）。
+			// キットは 4 つで、バンク MSB 126 のプログラム 113〜116 で選ぶ。鍵の「鳴らすもの」（3k nn 60 の 8 バイト）は
+			// パラメータチェンジでは変わらず、8 バイトまとめたバルクで書く。頭のフラグが 01 なら、サンプル番号（0 から）の
+			// サンプルを、鍵に関わらず元の高さで鳴らす。名前と鍵ごとの設定は、パラメータチェンジで変わる
+			{
+				static rig dk;
+				if (!dk.mu.load_program(dir + "/mu2000_flash.bin") || !dk.mu.load_wave(dir + "/dump"))
+					return 1;
+				dk.mu.load_sintab(dir + "/standin/sin-table.bin");
+				dk.mu.reset();
+				for (u32 i = 0; i < 30 * RATE && !dk.mu.midi_ready(); i += RATE / 100)
+					dk.pump(10);
+				dk.pump(2500);
+				std::vector<u8> got;
+				auto ask = [&](const std::vector<u8> &msg, u32 ms) {
+					got.clear();
+					dk.midi_tap = &got;
+					for (u8 b : msg)
+						dk.mu.midi_in(b, 0);
+					dk.pump(ms);
+					dk.midi_tap = nullptr;
+				};
+				auto bulk = [](u8 ah, u8 am, u8 al, const std::vector<u8> &data) {
+					std::vector<u8> body = { u8((data.size() >> 7) & 0x7f), u8(data.size() & 0x7f), ah, am, al };
+					body.insert(body.end(), data.begin(), data.end());
+					int sum = 0;
+					for (u8 b : body)
+						sum += b;
+					std::vector<u8> msg = { 0xf0, 0x43, 0x00, 0x68 };
+					msg.insert(msg.end(), body.begin(), body.end());
+					msg.push_back(u8((-sum) & 0x7f));
+					msg.push_back(0xf7);
+					return msg;
+				};
+				auto play = [&](int key) {
+					dk.out.clear();
+					dk.collect = true;
+					for (u8 b : { u8(0x90), u8(key), u8(100) })
+						dk.mu.midi_in(b, 0);
+					dk.pump(300);
+					dk.collect = false;
+					for (u8 b : { u8(0x80), u8(key), u8(0) })
+						dk.mu.midi_in(b, 0);
+					std::vector<double> o = dk.out;
+					dk.pump(600);
+					return o;
+				};
+				auto peak = [](const std::vector<double> &x) {
+					double m = 0;
+					for (double v : x)
+						m = std::max(m, std::fabs(v));
+					return m;
+				};
+				// 440Hz と 880Hz の、0.5 秒で消えていく音
+				std::string err;
+				int added = 0;
+				for (double f : { 440.0, 880.0 }) {
+					std::vector<s16> pcm(RATE / 2);
+					for (size_t i = 0; i < pcm.size(); i++)
+						pcm[i] = s16(20000.0 * std::sin(2 * PI * f * double(i) / RATE) * (1.0 - double(i) / double(pcm.size())));
+					added += dk.mu.sampling_add(pcm.data(), pcm.size(), f < 500 ? "low" : "high", err) > 0;
+					dk.pump(300);
+				}
+				// 頼むと、名前が返る
+				ask({ 0xf0, 0x43, 0x20, 0x68, 0x30, 0x00, 0x00, 0xf7 }, 400);
+				const bool named = got.size() == 4 + 2 + 3 + 8 + 2 && std::string(got.begin() + 9, got.begin() + 14) == "Kit01";
+				// 名前の 1 文字目を変える。鍵 30 と 32 にサンプル 1 と 2、鍵 34 はパラメータチェンジで書いてみる（変わらない）
+				ask({ 0xf0, 0x43, 0x10, 0x68, 0x30, 0x00, 0x00, 'X', 0xf7 }, 200);
+				ask(bulk(0x31, 0x30, 0x60, { 0x01, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00 }), 300);
+				ask(bulk(0x31, 0x32, 0x60, { 0x01, 0x00, 0x00, 0x01, 0x00, 0x00, 0x00, 0x00 }), 300);
+				ask({ 0xf0, 0x43, 0x10, 0x68, 0x31, 0x34, 0x60, 0x01, 0xf7 }, 300);
+				ask({ 0xf0, 0x43, 0x20, 0x68, 0x31, 0x32, 0x60, 0xf7 }, 400);
+				const bool src_back = got.size() == 4 + 2 + 3 + 8 + 2 && got[9] == 0x01 && got[12] == 0x01;
+				ask({ 0xb0, 0x00, 126, 0xb0, 0x20, 0, 0xc0, 112 }, 500);
+				const std::string shown = dk.lcd();
+				// 鍵 34 は鳴らない（前の音のリバーブの残りだけ）
+				const std::vector<double> lo = play(0x30), hi = play(0x32), none = play(0x34);
+				// 鍵 30 のレベルを下げる（鍵ごとの設定の 3 番目。パラメータチェンジ）
+				ask({ 0xf0, 0x43, 0x10, 0x68, 0x31, 0x30, 0x02, 0x20, 0xf7 }, 300);
+				const std::vector<double> soft = play(0x30);
+				const double l440 = tone(lo, 440), l880 = tone(lo, 880), h440 = tone(hi, 440), h880 = tone(hi, 880);
+				check(added == 2 && named && src_back && shown.find("Xit01") != std::string::npos && l440 > 0.02 && l880 < 0.05 * l440 &&
+				      h880 > 0.02 && h440 < 0.05 * h880 && peak(none) < 0.03 * peak(hi) && peak(soft) > 0.001 && peak(soft) < 0.6 * peak(lo),
+				      "サンプルのドラムキットを SysEx で作る",
+				      std::string("名前 ") + (named ? "返る" : "返らない") + "、鳴らすものの読み戻し " + (src_back ? "同じ" : "違う") + " [" + shown +
+				      "] 鍵 30: 440Hz " + std::to_string(l440) + "（880Hz " + std::to_string(l880) + "）、鍵 32: 880Hz " + std::to_string(h880) +
+				      "（440Hz " + std::to_string(h440) + "）、パラメータチェンジで書いた鍵 34 の山 " + std::to_string(peak(none)) +
+				      "、レベルを下げて " + std::to_string(peak(soft) / std::max(1e-12, peak(lo))) + " 倍");
+			}
+
 			// 要素を重ねる。要素 1 = 組 16 を左いっぱい、要素 2 = 組 39 を右いっぱいにして、右の大きさを見る
 			// （右にもリバーブで左の音が少し回るので、差は 20dB ほど）
 			// （実機でも 2 要素が鳴ることを確かめた。doc/sampling-ram.md）
@@ -1542,6 +1711,41 @@ static smu2000::voicelib::item g_lib_item;      // ライブラリの確かめ�
 				      "PD ノコギリの 2 倍音 " + std::to_string(pd1.mag(2) / pd1.mag(1)) + "、矩形の 3 倍音 " + std::to_string(pq.mag(3) / pq.mag(1)) +
 				      "、母音 頭の 3 倍音/基音 " + std::to_string(tone(vm_a, 784.9) / tone(vm_a, 261.63)) + "・まん中 " +
 				      std::to_string(tone(vm_m, 784.9) / tone(vm_m, 261.63)) + "、ベルの終わり/頭 " + std::to_string(tone(bl_z, 261.63) / tone(bl_a, 261.63)));
+			}
+
+			// 絵で描くループ（wavegen::paint）。行 0 を塗りつぶすと C3 のサイン、行 2 をループの前半だけ塗ると 3 倍音が前半だけ鳴る。
+			// 行の間隔を 1.5 にすると行 0 は G3（392Hz）へ動く。つなぎ目は合い、何も描かなければ無音
+			{
+				constexpr int R = wg::PAINT_ROWS, C = wg::PAINT_COLS;
+				std::vector<float> cells(size_t(R * C), 0.0f);
+				for (int c = 0; c < C; c++)
+					cells[size_t(c)] = 1.0f;
+				const std::vector<s16> p1 = wg::paint(cells.data());
+				const std::vector<s16> p15 = wg::paint(cells.data(), 1.5);
+				for (int c = 0; c < C / 2; c++)
+					cells[size_t(2 * C + c)] = 1.0f;
+				const std::vector<s16> p2 = wg::paint(cells.data());
+				const std::vector<float> none(size_t(R * C), 0.0f);
+				const std::vector<s16> p0 = wg::paint(none.data());
+				const auto d1 = as_double(p1), d15 = as_double(p15), d2 = as_double(p2);
+				const size_t q = p2.size() / 4;
+				const std::vector<double> a1(d1.begin(), d1.begin() + 6000), a15(d15.begin(), d15.begin() + 6000),
+				                          front(d2.begin() + long(q - 3000), d2.begin() + long(q + 3000)),
+				                          back(d2.begin() + long(3 * q - 3000), d2.begin() + long(3 * q + 3000));
+				const auto s1 = seam(p1), s2 = seam(p2);
+				const bool silent = std::all_of(p0.begin(), p0.end(), [](s16 v) { return v == 0; });
+				int peak = 0;
+				for (s16 v : p2)
+					peak = std::max(peak, std::abs(int(v)));
+				check(p1.size() == wg::LOOP_FRAMES * 8 && p2.size() == p1.size() && s1.first <= s1.second && s2.first <= s2.second &&
+				      tone(a1, 261.63) > 20 * tone(a1, 392.44) && tone(a15, 392.44) > 20 * tone(a15, 261.63) &&
+				      tone(front, 784.9) > 0.5 * tone(front, 261.63) && tone(back, 784.9) < 0.05 * tone(back, 261.63) &&
+				      silent && peak > 29000 && wg::paint_cycles(0, 1.0) == 200 && wg::paint_cycles(0, 0.001) == 1,
+				      "作った波形: 絵で描くループ",
+				      "行 0 の 392Hz/261Hz " + std::to_string(tone(a1, 392.44) / tone(a1, 261.63)) + "・間隔 1.5 で 261Hz/392Hz " +
+				      std::to_string(tone(a15, 261.63) / tone(a15, 392.44)) + "、3 倍音/基音 前半 " +
+				      std::to_string(tone(front, 784.9) / tone(front, 261.63)) + "・後半 " + std::to_string(tone(back, 784.9) / tone(back, 261.63)) +
+				      "、無音 " + std::to_string(int(silent)) + "、いちばん大きい所 " + std::to_string(peak));
 			}
 
 			// 音色のエディット（LFO・フィルター・ピッチ EG・フィルター EG）。PGM015 にノコギリを入れて欄を変え、鍵 60 を 1.5 秒鳴らす。
@@ -2407,6 +2611,23 @@ static smu2000::voicelib::item g_lib_item;      // ライブラリの確かめ�
 				};
 				send({ 0xf5, 5, 0xb0, 91, 0, 0xb9, 91, 0, 0xc0, 0 });
 				const std::vector<double> a4 = play(0, 69), a5 = play(0, 81), kick = play(9, 36), none = play(9, 40);
+				// バンクの下がり方（issue #196）。ぴったりが無ければ「MSB が同じで LSB 0」、それも無ければ「MSB・LSB とも 0」
+				{
+					smu2000::vboard::dls_bank bank;
+					auto add = [&](u8 msb, u8 lsb, u8 prog, const char *name) {
+						smu2000::vboard::dls_instrument i;
+						i.msb = msb; i.lsb = lsb; i.program = prog; i.name = name;
+						bank.instruments.push_back(i);
+					};
+					add(0, 0, 80, "base"); add(1, 0, 80, "var1"); add(8, 0, 80, "var8"); add(0, 3, 80, "xg3"); add(0, 0, 81, "other");
+					auto name = [&](u8 msb, u8 lsb, u8 prog) {
+						const smu2000::vboard::dls_instrument *i = bank.find(false, msb, lsb, prog);
+						return i ? i->name : std::string("-");
+					};
+					const std::string got = name(1, 1, 80) + " " + name(1, 0, 80) + " " + name(8, 2, 80) + " " + name(0, 3, 80) + " " +
+					                        name(0, 5, 80) + " " + name(5, 5, 80) + " " + name(1, 1, 81) + " " + name(0, 0, 99);
+					check(got == "var1 var1 var8 xg3 base base other -", "DLS のボード: 無いバンクは LSB を 0 にして探し、それも無ければ基本の音色", got);
+				}
 				// ゲートの無い音（ノートオンのすぐ後にノートオフ）も、リリースの長いドラムは鳴りきる（gm.dls のドラムは
 				// リリースが 40 秒ほど）。上の小さな DLS にはエンベロープが無いので、音源に直に音色を渡して確かめる
 				double tap = 0, held = 0;
@@ -2863,6 +3084,259 @@ static smu2000::voicelib::item g_lib_item;      // ライブラリの確かめ�
 				      "、音色の並び " + std::to_string(bv.size()) + "、書き換え: 前 440Hz " + std::to_string(e440) + " → 押したまま比を 2 に 880Hz " +
 				      std::to_string(l880) + "（440Hz " + std::to_string(l440) + "）、組の読み戻し " + (fm_same ? "同じ" : "違う") + "、欠けたファイルは" +
 				      (fm_cut ? "断る" : "通る"));
+			}
+
+			// ハーモニックボード（VBOARD_HARM16。src/vboard_harm.h）。正弦波の倍音 64 本を足す加算合成で、口 E の 16 パート。
+			// まず音源だけで:
+			//   ・128 個のプログラムがどれも鳴り（振り切れず、数として壊れず）、離して 8 秒で全部消える
+			//   ・矩形波の音色は奇数の倍音だけ（3 倍が基音の 1/3、2 倍は無い）。のこぎり波は 2 倍が基音の半分
+			//   ・ずれ: 鐘の音色の 2 本目は、ちょうど 2 倍ではなく式どおり上へずれたところにある
+			//   ・時間で変わる: ブラスは鳴り始めより 0.1 秒後のほうが高い倍音が多い。強く弾くほど明るい
+			//   ・行き来（CC71）: パッドは相手の音色（ガラス）に 2 倍の倍音が無いので、いっぱいまで動かすと 2 倍が消える
+			//   ・ドラム（チャンネル 10）は鳴り、閉じたハイハットは開いた音を止める
+			//   ・音色の組: 書き換えて渡すと変わり、ファイルの形にして読み戻すと同じになる。欠けたファイルは断る
+			// 次に本体に挿して: firmware が見つけ、口 E のチャンネル 1 でのこぎり波（鍵 69 で 440Hz）が鳴り、音量 0 で消える
+			{
+				namespace vb = smu2000::vboard;
+				using B = mu2000::button;
+				vb::harm_synth syn;
+				auto run = [&](int samples, int ch, double &peak, bool &bad) {
+					std::vector<double> o16(size_t(samples), 0.0);
+					for (int i = 0; i < samples; i++) {
+						float o[16] = {};
+						syn.render(o);
+						const double v = o[ch];
+						if (!(v == v) || std::fabs(v) > 4.0)
+							bad = true;
+						peak = std::max(peak, std::fabs(v));
+						o16[size_t(i)] = v;
+					}
+					return o16;
+				};
+				auto rms = [](const std::vector<double> &x) {
+					double e = 0;
+					for (double v : x)
+						e += v * v;
+					return std::sqrt(e / double(std::max<size_t>(1, x.size())));
+				};
+				int silent = 0, stuck = 0, heaviest = 0;
+				bool bad = false;
+				double loudest = 0;
+				for (int prog = 0; prog < 128; prog++) {
+					syn.reset();
+					syn.midi(0xc0, u8(prog), 0);
+					for (int k : { 48, 60, 64, 67 })
+						syn.midi(0x90, u8(k), 110);
+					double peak = 0;
+					if (rms(run(4410, 0, peak, bad)) < 0.002)
+						silent++;
+					heaviest = std::max(heaviest, syn.partials_running());
+					loudest = std::max(loudest, peak);
+					for (int k : { 48, 60, 64, 67 })
+						syn.midi(0x80, u8(k), 0);
+					double dummy = 0;
+					run(44100 * 8, 0, dummy, bad);
+					if (syn.sounding())
+						stuck++;
+				}
+				double dp = 0;
+				auto held = [&](int prog, int key, int vel, int skip, int take) {
+					syn.reset();
+					syn.midi(0xc0, u8(prog), 0);
+					syn.midi(0x90, u8(key), u8(vel));
+					run(skip, 0, dp, bad);
+					return run(take, 0, dp, bad);
+				};
+				const std::vector<double> sq = held(80, 69, 127, 4410, 8820), saw = held(84, 69, 127, 4410, 8820);
+				const double sq1 = tone(sq, 440), sq2 = tone(sq, 880), sq3 = tone(sq, 1320), sw1 = tone(saw, 440), sw2 = tone(saw, 880);
+				// 鐘（プログラム 9）: ずれ 0.95 → B = 0.01 × 0.95²。2 本目は 2 × √(1 + 3B) 倍
+				const double b2 = 440.0 * vb::harm_ratio(vb::harm_default_voice(8), 2);
+				const std::vector<double> bell = held(8, 69, 127, 2205, 22050);
+				const double bell_at = tone(bell, b2), bell_exact = tone(bell, 880);
+				// ブラス（プログラム 57）: 5 倍と基音の比を、鳴り始めと 0.15 秒後、弱く弾いたときで比べる
+				const std::vector<double> br_early = held(56, 57, 127, 0, 882), br_late = held(56, 57, 127, 6615, 4410), br_soft = held(56, 57, 30, 6615, 4410);
+				const auto tilt = [&](const std::vector<double> &x) { return tone(x, 1100) / std::max(1e-12, tone(x, 220)); };
+				const double t_early = tilt(br_early), t_late = tilt(br_late), t_soft = tilt(br_soft);
+				// パッド（プログラム 89）→ CC71 でガラス（93）へ。伸ばしている間の 2 倍の倍音を見る
+				syn.reset();
+				syn.midi(0xc0, 88, 0);
+				syn.midi(0x90, 57, 127);
+				run(44100 * 5, 0, dp, bad);
+				const std::vector<double> pad0 = run(8820, 0, dp, bad);
+				syn.midi(0xb0, 71, 127);
+				run(4410, 0, dp, bad);
+				const std::vector<double> pad1 = run(8820, 0, dp, bad);
+				const double m0 = tone(pad0, 440) / std::max(1e-12, tone(pad0, 220)), m1 = tone(pad1, 440) / std::max(1e-12, tone(pad1, 220));
+				// ドラム
+				syn.reset();
+				syn.midi(0x99, 36, 120);
+				const double kick = rms(run(4410, 9, dp, bad));
+				syn.midi(0xb9, 120, 0);
+				syn.midi(0x99, 46, 120);
+				run(2205, 9, dp, bad);
+				const double open_ring = rms(run(2205, 9, dp, bad));
+				syn.midi(0xb9, 120, 0);
+				syn.midi(0x99, 46, 120);
+				run(2205, 9, dp, bad);
+				syn.midi(0x99, 42, 30);                  // 弱く閉じる: 開いた音が止まる
+				run(2205, 9, dp, bad);
+				const double choked = rms(run(2205, 9, dp, bad));
+				// 音色の組: 3 本目の倍音だけの音色をプログラム 6 に置く → 鍵 69 で 1320Hz だけが鳴る
+				auto bank = std::make_shared<vb::harm_bank>();
+				vb::harm_voice one;
+				std::snprintf(one.name, sizeof(one.name), "THIRD   ");
+				for (int f = 0; f < vb::HARM_FRAMES; f++)
+					one.amp[f][2] = 1.0f;
+				one.bright = 0.0f;
+				bank->prog[5] = one;
+				syn.reset();
+				syn.set_bank(bank);
+				const std::vector<double> third = held(5, 69, 127, 2205, 8820);
+				const double th1 = tone(third, 440), th3 = tone(third, 1320);
+				const std::vector<u8> hbytes = vb::write_harm_bank(*bank);
+				std::string herr;
+				const auto hback = vb::read_harm_bank(hbytes.data(), hbytes.size(), herr);
+				const bool h_same = hback && vb::write_harm_bank(*hback) == hbytes && std::string(hback->prog[5].name) == "THIRD   " &&
+				                    hback->prog[88].morph_to == 92;
+				const bool h_cut = !vb::read_harm_bank(hbytes.data(), hbytes.size() - 50, herr);
+				syn.set_bank(nullptr);
+				// 重さ: のこぎり波を 32 声（倍音はどれも聞こえる高さまで）。1 秒ぶんを作るのにかかった時間
+				syn.reset();
+				syn.midi(0xc0, 84, 0);
+				for (int k = 0; k < 32; k++)
+					syn.midi(0x90, u8(36 + k), 100);
+				run(4410, 0, dp, bad);
+				const int busy = syn.partials_running();
+				const auto t0 = std::chrono::steady_clock::now();
+				run(44100, 0, dp, bad);
+				const double cost = std::chrono::duration<double>(std::chrono::steady_clock::now() - t0).count();
+
+				// 聞かせて真似させる（src/harm_analyze.h）。音源で鳴らした音を録ったつもりで測り直す:
+				//   ・倍音 1・2・3・5・8 本目だけの音色を鍵 57（220Hz）で 1.5 秒 → 高さ、伸ばしている音だということ、倍音の大きさが元に戻る
+				//   ・測った音色を組に入れて鳴らすと、5 倍と基音の比が元と同じ
+				//   ・鐘（ずれ 0.95）→ ずれの量が出て、消えていく音だと分かる
+				//   ・無音と、短すぎる音は断る
+				bool an_ok = false, an_bell = false, an_refuse = false;
+				double an_f0 = 0, an_worst = 0, an_ratio = 0, an_inharm = 0;
+				double an_bell_f0 = 0;
+				bool an_bell_sus = false;
+				{
+					auto mine = std::make_shared<vb::harm_bank>();
+					vb::harm_voice src;
+					std::snprintf(src.name, sizeof(src.name), "SOURCE  ");
+					const float want[vb::HARM_PARTIALS] = { 1.0f, 0.5f, 0.25f, 0.0f, 0.6f, 0.0f, 0.0f, 0.1f };
+					for (int f = 0; f < vb::HARM_FRAMES; f++)
+						std::copy(want, want + vb::HARM_PARTIALS, src.amp[f]);
+					src.bright = 0.0f;
+					src.attack = 0.02f;
+					mine->prog[0] = src;
+					auto record = [&](int prog, int key, double hold, double tail) {
+						syn.reset();
+						syn.midi(0xc0, u8(prog), 0);
+						syn.midi(0x90, u8(key), 127);
+						std::vector<double> a = run(int(hold * 44100), 0, dp, bad);
+						syn.midi(0x80, u8(key), 0);
+						const std::vector<double> b = run(int(tail * 44100), 0, dp, bad);
+						a.insert(a.end(), b.begin(), b.end());
+						return std::vector<float>(a.begin(), a.end());
+					};
+					syn.set_bank(mine);
+					const std::vector<float> rec = record(0, 57, 1.5, 0.4);
+					vb::harm_analysis an;
+					std::string aerr;
+					if (vb::harm_analyze(rec.data(), rec.size(), 44100.0, an, aerr)) {
+						an_f0 = an.f0;
+						for (int h = 0; h < vb::HARM_PARTIALS; h++)
+							an_worst = std::max(an_worst, double(std::fabs(an.voice.amp[2][h] - want[h])));
+						// 測った音色で鳴らし直す
+						an.voice.bright = 0.0f;
+						mine->prog[1] = an.voice;
+						syn.set_bank(mine);
+						const std::vector<double> again = held(1, 57, 127, 22050, 8820);
+						an_ratio = tone(again, 1100) / std::max(1e-12, tone(again, 220));
+						an_ok = std::fabs(an.f0 - 220.0) < 0.5 && an.key == 57 && an.sustained && an_worst < 0.03 &&
+						        an.voice.inharm == 0.0f && an_ratio > 0.55 && an_ratio < 0.65;
+					}
+					syn.set_bank(nullptr);
+					const std::vector<float> brec = record(8, 69, 3.0, 0.1);
+					vb::harm_analysis ab;
+					if (vb::harm_analyze(brec.data(), brec.size(), 44100.0, ab, aerr)) {
+						an_inharm = ab.voice.inharm;
+						an_bell_f0 = ab.f0;
+						an_bell_sus = ab.sustained;
+						an_bell = std::fabs(ab.voice.inharm - 0.95f) < 0.1f && !ab.sustained && std::fabs(ab.f0 - 440.0) < 2.0;
+					}
+					const std::vector<float> hush(44100, 0.0f);
+					const std::vector<float> blip(rec.begin(), rec.begin() + 2000);
+					vb::harm_analysis ax;
+					an_refuse = !vb::harm_analyze(hush.data(), hush.size(), 44100.0, ax, aerr) &&
+					            !vb::harm_analyze(blip.data(), blip.size(), 44100.0, ax, aerr);
+				}
+
+				static rig hr;
+				if (!hr.mu.load_program(dir + "/mu2000_flash.bin") || !hr.mu.load_wave(dir + "/dump"))
+					return 1;
+				hr.mu.load_sintab(dir + "/standin/sin-table.bin");
+				hr.mu.set_virtual_board(mu2000::VBOARD_HARM16, 0);
+				hr.mu.reset();
+				for (u32 i = 0; i < 30 * RATE && !hr.mu.midi_ready(); i += RATE / 100)
+					hr.pump(10);
+				hr.pump(3000);
+				const bool known = hr.mu.virtual_board_known();
+				auto send = [&](std::initializer_list<int> msg) {
+					for (int x : msg)
+						hr.mu.midi_in(u8(x), 0);
+				};
+				auto play = [&](int ch, int key) {
+					hr.pump(300);
+					hr.out.clear();
+					hr.collect = true;
+					send({ 0x90 | ch, key, 127 });
+					hr.pump(300);
+					hr.collect = false;
+					send({ 0x80 | ch, key, 0 });
+					std::vector<double> o = hr.out;
+					hr.pump(600);
+					return o;
+				};
+				send({ 0xf5, 5, 0xb0, 91, 0, 0xb9, 91, 0, 0xc0, 84 });      // 口 E へ。チャンネル 1 はのこぎり波
+				const std::vector<double> lead = play(0, 69);
+				const double o440 = tone(lead, 440), o880 = tone(lead, 880);
+				send({ 0xb0, 7, 0 });
+				const std::vector<double> quiet = play(0, 69);
+				send({ 0xb0, 7, 100 });
+				const std::vector<double> hkick = play(9, 36);
+				const std::vector<mu2000::board_voice> bv = hr.mu.board_voices();
+				send({ 0xf5, 1 });
+				hr.press(B::util, 150);
+				for (int i = 0; i < 6; i++)
+					hr.press(B::select_right, 150);
+				hr.press(B::enter, 150);
+				const std::string list = hr.lcd();
+				check(!silent && !stuck && !bad && loudest < 1.5 &&
+				      sq1 > 0.01 && sq2 < 0.01 * sq1 && sq3 > 0.28 * sq1 && sq3 < 0.38 * sq1 && sw2 > 0.45 * sw1 && sw2 < 0.55 * sw1 &&
+				      b2 > 890 && bell_at > 0.003 && bell_exact < 0.3 * bell_at &&
+				      t_late > 3.0 * t_early && t_late > 2.0 * t_soft && m0 > 0.05 && m1 < 0.2 * m0 &&
+				      kick > 0.01 && open_ring > 0.003 && choked < 0.5 * open_ring &&
+				      th3 > 0.01 && th1 < 0.01 * th3 && h_same && h_cut && an_ok && an_bell && an_refuse &&
+				      known && list.find("HARMONIC") != std::string::npos && o440 > 0.01 && o880 > 0.4 * o440 && o880 < 0.6 * o440 &&
+				      rms(quiet) < 0.002 * rms(lead) && rms(hkick) > 0.003 && bv.size() == 129,
+				      "ハーモニックボード: 倍音を足して鳴らす。口 E の 16 パートのボードとして挿さる",
+				      "鳴らないプログラム " + std::to_string(silent) + "、消えないプログラム " + std::to_string(stuck) +
+				      (bad ? "、壊れた値あり" : "") + "、いちばん大きい山 " + std::to_string(loudest) + "、矩形 1:2:3 倍 = " + std::to_string(sq1) + " " +
+				      std::to_string(sq2) + " " + std::to_string(sq3) + "、のこぎり 2 倍 / 基音 " + std::to_string(sw2 / std::max(1e-12, sw1)) +
+				      "、鐘の 2 本目 " + std::to_string(b2) + "Hz に " + std::to_string(bell_at) + "（880Hz に " + std::to_string(bell_exact) +
+				      "）、ブラスの 5 倍 / 基音: 鳴り始め " + std::to_string(t_early) + " → 0.15 秒後 " + std::to_string(t_late) + "、弱く " +
+				      std::to_string(t_soft) + "、行き来: 2 倍 / 基音 " + std::to_string(m0) + " → " + std::to_string(m1) + "、キック " +
+				      std::to_string(kick) + "、開いたハイハット " + std::to_string(open_ring) + " → 閉じて " + std::to_string(choked) +
+				      "、3 本目だけの音色 1320Hz " + std::to_string(th3) + "（440Hz " + std::to_string(th1) + "）、組の読み戻し " +
+				      (h_same ? "同じ" : "違う") + "、欠けたファイルは" + (h_cut ? "断る" : "通る") + "、見つけた " + (known ? "はい" : "いいえ") +
+				      " [" + list + "] 口 E ののこぎり 440Hz " + std::to_string(o440) + "（880Hz " + std::to_string(o880) + "）、音量 0 で " +
+				      std::to_string(rms(quiet) / std::max(1e-12, rms(lead))) + " 倍、口 E のキック " + std::to_string(rms(hkick)) + "、音色の並び " +
+				      std::to_string(bv.size()) + "、重さ: 倍音 " + std::to_string(busy) + " 本（32 声）の 1 秒ぶんに " + std::to_string(cost) +
+				      " 秒、4 和音でいちばん多い音色 " + std::to_string(heaviest) + " 本、測り直し: 基音 " + std::to_string(an_f0) + "Hz、倍音のいちばん大きい違い " + std::to_string(an_worst) +
+				      "、鳴らし直した 5 倍 / 基音 " + std::to_string(an_ratio) + (an_ok ? "" : "（NG）") + "、鐘のずれ " + std::to_string(an_inharm) + "（基音 " + std::to_string(an_bell_f0) + "Hz、" + (an_bell_sus ? "伸ばす音" : "消える音") + "）" +
+				      (an_bell ? "" : "（NG）") + "、無音と短い音は" + (an_refuse ? "断る" : "通る"));
 			}
 
 			// 同じ SysEx を直に読み込む（sampling_load_sysex）。「全部を消す」だけ MIDI で送って firmware に消させ、

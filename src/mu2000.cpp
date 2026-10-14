@@ -17,6 +17,7 @@
 #include "xg/fx_params.h"
 
 #include <algorithm>
+#include <bit>
 #include <cmath>
 #include <cstdio>
 #include <cstdlib>
@@ -24,7 +25,6 @@
 
 #include "compat/platform.h"
 #include "compat/realtime.h"
-
 
 namespace {
 
@@ -1765,11 +1765,11 @@ void mu2000::native_learn_start(u32 rec)
 				m_ne_learn_dirty++;
 				if (std::getenv("SMU2000_NATIVE_DEBUG"))
 					std::fprintf(stderr, "写し取りが汚れた: すでに %d 個、新しい鍵 %016llx 重なり %016llx\n",
-					             __builtin_popcountll(m_learn_keyed),
+					             std::popcount(m_learn_keyed),
 					             (unsigned long long)m_learn_mask,
 					             (unsigned long long)(m_learn_mask & m_learn_keyed));
 			}
-			if (__builtin_popcountll(m_learn_keyed) < m_learn_want) {
+			if (std::popcount(m_learn_keyed) < m_learn_want) {
 				// **firmware がこちらの鳴っているスロットを取ったか**を見る。
 				// firmware は native の使用中を知らないので、声が増えると
 				// 奪い合いになり、写し取りに 2 つの音の値が混ざる
@@ -1792,7 +1792,7 @@ void mu2000::native_learn_start(u32 rec)
 			// 37ms 遅れて鳴らす音色があり、打ち切ると片方しか写し取れない。
 			// 長く占有すると、その間ほかの音色が写し取りを始められないので、
 			// そろったら 5ms で切り上げる
-			m_learn_left = __builtin_popcountll(m_learn_keyed) >= m_learn_want
+			m_learn_left = std::popcount(m_learn_keyed) >= m_learn_want
 			             ? 44100 / 200 : 44100 / 16;
 			break;
 		default: break;
@@ -1974,7 +1974,7 @@ void mu2000::native_learn_finish()
 	const int ncal = int(cals.size());
 	if (std::getenv("SMU2000_NATIVE_DEBUG")) {
 		std::fprintf(stderr, "learn rec=%06x 要素 %d 写し %d 鍵いた %d part=%d ctx=%08x\n",
-		             m_learn_rec, nel, ncal, __builtin_popcountll(m_learn_keyed),
+		             m_learn_rec, nel, ncal, std::popcount(m_learn_keyed),
 		             m_learn_part, m_ndrv.part_ctx(m_learn_part));
 		for (int k = 0; k < ncal; k++) {
 			const xg::nv::voice_cal &c = cals[size_t(k)];
@@ -2485,7 +2485,9 @@ void mu2000::draw_voice_fields()
 	}
 	// **絵は 16 行 × 16 ビットを左から 5 ビットずつ**（6.190）。
 	// 外字 0・1・2 が上半分（行 0-7）、4・5・6 が下半分（行 8-15）。
-	// いちばん右の 1 列（bit0）は出さない
+	// いちばん右の 1 列（bit0）は、その隣の外字 3・7 の bit4（issue #192。firmware と同じ置き場）。
+	// 外字 3・7 の残りの 4 ビットは決まった形のセグメントの点け消しで firmware の持ち物なので、
+	// そこは触らず、こちらの持ち物にもしない（firmware があとから同じ値を書く）
 	for (int y = 0; y < 16; y++) {
 		if (m_vf_icon[y] == ico[y]) {
 			for (int c = 0; c < 3; c++)
@@ -2498,6 +2500,8 @@ void mu2000::draw_voice_fields()
 			m_lcd.set_cg_owned(at, true);
 			m_lcd.poke_cgram(at, u8((ico[y] >> (11 - c * 5)) & 0x1f));
 		}
+		const u32 edge = u32((y < 8 ? 3 : 7) * 8 + (y & 7));
+		m_lcd.poke_cgram(edge, u8((m_lcd.cgram()[edge] & 0x0f) | ((ico[y] & 1) << 4)));
 	}
 }
 
@@ -3442,7 +3446,8 @@ void mu2000::vb_from_firmware(vb_slot &s, const std::vector<u8> &m)
 			if (s.kind == VBOARD_USER || s.kind == VBOARD_USER16)
 				std::snprintf(name, sizeof(name), "%-14.14s", m_vb_user_board ? m_vb_user_board->name : "MY BOARD");
 			else if (s.kind != VBOARD_FC)
-				std::snprintf(name, sizeof(name), "%-14.14s", s.kind == VBOARD_DLS ? "DLS BOARD" : s.kind == VBOARD_FM16 ? "FM BOARD" : "FC16 BOARD");
+				std::snprintf(name, sizeof(name), "%-14.14s", s.kind == VBOARD_DLS ? "DLS BOARD" : s.kind == VBOARD_FM16 ? "FM BOARD" :
+				              s.kind == VBOARD_HARM16 ? "HARMONIC" : "FC16 BOARD");      // 液晶に出るのは 10 文字まで
 			r.insert(r.end(), name, name + 14);
 			break;
 		}
@@ -3618,6 +3623,7 @@ void mu2000::vb16_reset(bool voices)
 		m_vb_dls.reset();
 		m_vb_user16.reset();
 		m_vb_fm.reset();
+		m_vb_harm.reset();
 		m_vb16_parse = vb_parse();
 		m_vb16_sx.clear();
 	}
@@ -3652,6 +3658,7 @@ void mu2000::board_midi_in(u8 byte)
 	if (!(multi_kind() != 0) || byte >= 0xf8)
 		return;
 	const bool dls = multi_kind() == VBOARD_DLS, user = multi_kind() == VBOARD_USER16, fm = multi_kind() == VBOARD_FM16;
+	const bool harm = multi_kind() == VBOARD_HARM16;
 	// SysEx は、リセット（XG System On F0 43 1n 4C 00 00 7E 00 F7、GM System On F0 7E 7F 09 01 F7、
 	// GS リセット F0 41 dd 42 12 40 00 7F 00 41 F7）と、DLS のボードではドラムのパートの指定を読む:
 	//   GS「リズムパートに使う」 F0 41 dd 42 12 40 1x 15 vv 和 F7（x = 0 はチャンネル 10、1-9 は 1-9、A-F は 11-16。vv = 0 でメロディ）
@@ -3671,9 +3678,11 @@ void mu2000::board_midi_in(u8 byte)
 				const int x = sx[6] & 15;
 				m_vb_dls.set_drum(x == 0 ? 9 : x <= 9 ? x - 1 : x, sx[8] != 0);
 				m_vb_fm.set_drum(x == 0 ? 9 : x <= 9 ? x - 1 : x, sx[8] != 0);
+				m_vb_harm.set_drum(x == 0 ? 9 : x <= 9 ? x - 1 : x, sx[8] != 0);
 			} else if (xg && sx[4] == 0x08 && sx[5] < 16 && sx[6] == 0x07) {
 				m_vb_dls.set_drum(sx[5], sx[7] != 0);
 				m_vb_fm.set_drum(sx[5], sx[7] != 0);
+				m_vb_harm.set_drum(sx[5], sx[7] != 0);
 			}
 			m_vb16_sx.clear();
 		} else if ((byte & 0x80) || m_vb16_sx.size() >= 12) {
@@ -3744,6 +3753,8 @@ void mu2000::board_midi_in(u8 byte)
 				m_vb_user16.midi(p.status, 121, 0);
 			} else if (fm) {
 				m_vb_fm.midi(p.status, 121, 0);
+			} else if (harm) {
+				m_vb_harm.midi(p.status, 121, 0);
 			} else {
 				c.fc.midi(0xe0, 0x00, 0x40);
 				c.fc.midi(0xb0, 1, 0);
@@ -3758,6 +3769,8 @@ void mu2000::board_midi_in(u8 byte)
 		m_vb_user16.midi(p.status, p.d[0], need == 2 ? p.d[1] : 0);
 	else if (fm)
 		m_vb_fm.midi(p.status, p.d[0], need == 2 ? p.d[1] : 0);
+	else if (harm)
+		m_vb_harm.midi(p.status, p.d[0], need == 2 ? p.d[1] : 0);
 	else
 		c.fc.midi(p.status, p.d[0], need == 2 ? p.d[1] : 0);
 }
@@ -3788,6 +3801,10 @@ std::vector<mu2000::board_voice> mu2000::board_voices() const
 		for (int i = 0; i < 128; i++)
 			add(false, 0, 0, u8(i), m_vb_fm.voice_of(i).name);
 		add(true, 0, 0, 0, "FM Kit");
+	} else if (kind == VBOARD_HARM16) {
+		for (int i = 0; i < 128; i++)
+			add(false, 0, 0, u8(i), m_vb_harm.voice_of(i).name);
+		add(true, 0, 0, 0, "Hm Kit");
 	} else if (kind == VBOARD_USER16 && m_vb_user_board) {
 		for (int i = 0; i < smu2000::vboard::user_board::PROGRAMS; i++)
 			if (const auto &p = m_vb_user_board->program[size_t(i)])
@@ -3833,6 +3850,10 @@ void mu2000::board_parts(board_part out[16])
 				std::snprintf(o.name, sizeof(o.name), "%s", m_vb_fm.voice_of(o.program).name);
 				continue;                  // 名前はもう入れた（写しなので、下の name では渡せない）
 			}
+		} else if (multi_kind() == VBOARD_HARM16) {
+			o.program = m_vb_harm.program(i);
+			o.drum = m_vb_harm.drum(i);
+			name = o.drum ? "Hm Kit" : m_vb_harm.voice_of(o.program).name;
 		} else if (multi_kind() == VBOARD_USER16) {
 			o.program = m_vb_user16.program(i);
 			name = m_vb_user16.program_name(o.program);
@@ -3898,6 +3919,15 @@ bool mu2000::vb16_mix(float bus[][2])
 			any = true;
 			float ch[16] = {};
 			m_vb_fm.render(ch);
+			for (int i = 0; i < 16; i++)
+				if (ch[i] != 0.0f)
+					mix(m_vb16[size_t(i)], ch[i], ch[i]);
+		}
+	} else if (multi_kind() == VBOARD_HARM16) {
+		if (m_vb_harm.sounding()) {
+			any = true;
+			float ch[16] = {};
+			m_vb_harm.render(ch);
 			for (int i = 0; i < 16; i++)
 				if (ch[i] != 0.0f)
 					mix(m_vb16[size_t(i)], ch[i], ch[i]);

@@ -27,6 +27,7 @@
 
 #include "ui/lang.h"
 #include "ui/font_file.h"
+#include "ui/file_ask_mac.h"
 #include "ui/texts.h"
 
 #import <Cocoa/Cocoa.h>
@@ -108,6 +109,10 @@ struct host {
 
 - (instancetype)initWithFrame:(NSRect)frame host:(host *)h
 {
+	// The editors in this window have file requests and this platform answers
+	// them, which is what makes them offer buttons rather than a path box. In the
+	// window's creation, the way pc_window::create does it on Windows.
+	ui::enable_file_dialogs();
 	self = [super initWithFrame:frame];
 	if (self) {
 		_h = h;
@@ -672,6 +677,7 @@ void pc_window::frame(xg::model &m, const xg_snapshot &ram, bridge &br)
 	pass.colorAttachments[0].storeAction = MTLStoreActionStore;
 
 	ImGui_ImplMetal_NewFrame(pass);
+	ensure_cjk_ui_fonts(ImGui::GetIO().Fonts);
 	ImGui::NewFrame();
 	m_view->draw(m, ram, br);
 	xgui::drag_flush(br);          // マウスで動かしている値の、間引いた送信
@@ -684,6 +690,14 @@ void pc_window::frame(xg::model &m, const xg_snapshot &ram, bridge &br)
 	[buf presentDrawable:drawable];
 	[buf commit];
 	// no wait: gui's timer (30 frames a second) decides the pace
+
+	// A file request is answered outside the frame, never inside it: a panel must
+	// not open while ImGui is between NewFrame and Render. Windows posts a window
+	// message here for the same reason; the main queue runs this block after the
+	// turn that drew has finished, which is the same guarantee.
+	dispatch_async(dispatch_get_main_queue(), ^{
+		service_file_asks();
+	});
 }
 
 } // namespace ui

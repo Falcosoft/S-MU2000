@@ -32,6 +32,7 @@
 #pragma once
 
 #include "compat/mamecompat.h"
+#include "audio_stream.h"
 #include "cpu_meter.h"
 
 #include <atomic>
@@ -40,6 +41,7 @@
 
 #if defined(__APPLE__) || defined(__linux__)
 #include <memory>
+#include <mutex>
 #include <vector>
 #else
 #include <thread>
@@ -70,7 +72,18 @@ public:
 
 	// 使える再生デバイスの名前。番号は挿し直すとずれるので、**名前で選ぶ**
 	// (live --list prints this on both platforms, so macOS needs the same answer)
-	static std::vector<std::string> list();
+	static std::vector<std::string> list(audio_driver driver = audio_driver::native);
+	static std::string default_device_name(audio_driver driver = audio_driver::native);
+	// Set only while stopped; read stream_info() after start() completes.
+	void set_stream_options(const audio_stream_options &s) { m_stream = s; }
+	void set_control_panel(bool show) { m_control_panel = show; }
+	// By value, behind a lock: a recovery can move the device and rewrites this
+	// from the watchdog's thread.
+	audio_stream_info stream_info() const
+	{
+		const std::lock_guard<std::mutex> lock(m_info_lock);
+		return m_info;
+	}
 
 	// latency_ms is the target amount to keep queued (0 or less leaves the
 	// device's own buffer size alone). exclusive asks for hog mode, which is this
@@ -111,7 +124,21 @@ public:
 	void stop();
 
 	// Progress. Written on the audio thread, safe to read from anywhere.
+	//
+	// Two counts, and they are not in the same unit. produced() is in 44100 Hz
+	// machine frames, so dividing it by AUDIO_RATE gives seconds - which is what
+	// live.cpp does, for its progress line and for the CPU-per-second in the
+	// closing summary. buffer_frames() is the device's own buffer in the device's
+	// own frames: the desktop back ends open the device at 44100, so the two
+	// numbers are the same there, while the Apple back ends run against whatever
+	// the device runs at (48000 on every iPhone) and 480 frames there is 10 ms,
+	// not 10.9. So buffer_frames() is for reporting a frame count, as the iOS log
+	// line does, and there is deliberately nothing to convert it with:
+	// device_rate() below is the WASAPI back end's own, and the Apple back ends
+	// keep the device rate to themselves. Arithmetic on produced() is safe;
+	// arithmetic on buffer_frames() is not.
 	u32 buffer_frames() const;
+	bool running() const;
 	u64 produced() const;
 	u64 starved() const;
 	// The CoreAudio render callback already runs at real-time priority, so this
@@ -124,15 +151,25 @@ public:
 	double worst_ms() const;
 
 private:
+	bool m_control_panel = false;
+	audio_stream_options m_stream;
+	audio_stream_info m_info;
+	mutable std::mutex m_info_lock;   // guards m_info against the watchdog
 	struct impl;
 	std::unique_ptr<impl> m_impl;
 
-	// Outside impl on purpose: stop() throws impl away, and what was captured
-	// has to outlive it to be written out afterwards. The render callback appends
-	// through a pointer held in impl, so it stays the only writer
+	// Outside impl: stop() throws impl away and the capture has to outlive it. The
+	// render callback appends through a pointer in impl, so it stays the only
+	// writer.
 	std::vector<s16> m_cap;
-	bool             m_capturing = false;
 	std::string      m_cap_path;
+	// What the capture holds, for the header write_wav puts at the front of it.
+	// Linux records at whatever the device opened at; the Apple back ends know it
+	// in the render core, so these are declared for Linux alone.
+#if defined(__linux__)
+	bool             m_capturing = false;
+	u32 m_capture_rate = AUDIO_RATE, m_capture_channels = 2;
+#endif
 };
 
 #else
@@ -146,7 +183,12 @@ public:
 	~audio_out() { stop(); }
 
 	// 使える再生デバイスの名前。番号は挿し直すとずれるので、**名前で選ぶ**
-	static std::vector<std::string> list();
+	static std::vector<std::string> list(audio_driver driver = audio_driver::native);
+	static std::string default_device_name(audio_driver driver = audio_driver::native);
+	// Set only while stopped; read stream_info() after start() completes.
+	void set_stream_options(const audio_stream_options &s) { m_stream = s; }
+	void set_control_panel(bool show) { m_control_panel = show; }
+	const audio_stream_info &stream_info() const { return m_info; }
 
 	// latency_ms は**溜める目標の長さ**。0 以下ならデバイスの周期 2 つぶん。
 	// exclusive なら Windows の混ぜ合わせを通さない（他のアプリは鳴らせない）。
@@ -213,7 +255,11 @@ public:
 	std::string latency_line() const;
 
 private:
+	bool m_control_panel = false;
+	audio_stream_options m_stream;
+	audio_stream_info m_info;
 	void run(int latency_ms, bool exclusive);
+	void run_portaudio(int latency_ms);
 
 	fill_fn           m_fill;
 	std::thread       m_thread;

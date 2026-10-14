@@ -98,9 +98,8 @@ public:
 		}
 	}
 
-	// パラメータの層の問い合わせ（ダンプ要求）。send と同じく音源の口 A へ入るが、
-	// **外の MIDI THRU へは流さない**（画面が値を読みに行っているだけで、外の機器には
-	// 関係が無い）。書き手は画面の糸だけ
+	// Internal queries and mode resets enter port A without MIDI THRU.
+	// Written only by the UI thread.
 	bool ask(const std::vector<u8> &m) { return m.empty() || m_ask.put(m.data(), m.size()); }
 
 	// 音源が MIDI OUT から送り出したもの（問い合わせの返事など）。画面の糸が 1 バイトずつ
@@ -112,6 +111,24 @@ public:
 
 	void set_gain(float g) { m_gain.store(g, std::memory_order_relaxed); }
 	float gain() const     { return m_gain.load(std::memory_order_relaxed); }
+
+	// パネルの A/D INPUT のつまみ（0〜1）。A/D INPUT に入る音を、音源に渡す手前で大きく・小さくする
+	// （実機では A/D 変換の手前のアナログのつまみ。issue #191）。既定の位置 AD_KNOB_DEFAULT が等倍で、
+	// 左いっぱいで無音、右いっぱいで約 +14dB。掛けるのは ad_gain()（つまみの位置の 2 乗に比例）
+	static constexpr float AD_KNOB_DEFAULT = 0.45f;
+	void set_ad_knob(float k) { m_ad_knob.store(k < 0 ? 0 : k > 1 ? 1 : k, std::memory_order_relaxed); }
+	float ad_knob() const     { return m_ad_knob.load(std::memory_order_relaxed); }
+	float ad_gain() const
+	{
+		const float k = ad_knob() / AD_KNOB_DEFAULT;
+		return k * k;
+	}
+	// つまみを掛けた A/D INPUT の 1 サンプル。A/D 変換と同じく 16bit で頭打ちにする
+	static int ad_scaled(int v, float gain)
+	{
+		const float x = float(v) * gain;
+		return x > 32767.0f ? 32767 : x < -32768.0f ? -32768 : int(x);
+	}
 
 	// 音声の処理にかかっている CPU（1 回の締め切りに対する割合、%）。音声を自分で回している
 	// gui が書き、PC の窓が読んで出す。プラグインのようにホストが回すときは書かない（負のまま）
@@ -377,19 +394,31 @@ public:
 		out = m_view;
 	}
 	// 録音デバイスの選択（gui の A/D INPUT。プラグインではホストのバスなので使わない）。
-	// 名前の一覧と今の名前は gui が置き、窓が選んだ番号（-1 = 無し）を gui が拾って開き直す
-	void set_ain_devices(std::vector<std::string> names, std::string current)
+	// 窓が選んだ番号（-1 = 無し）を gui が拾って開き直す。
+	//
+	// The list is a snapshot, the current selection is not. Counting devices is
+	// slow enough to want its own thread (app::list_ain_async), but there are two
+	// ways to choose one - this window's combo and the panel's own menu - so a
+	// stored value goes stale the moment the other one is used, and the window
+	// then shows "(none)" for a device that is open and feeding the machine. Only
+	// the names are stored; the current name is asked for.
+	void set_ain_devices(std::vector<std::string> names)
 	{
 		std::lock_guard<std::mutex> lock(m_ain_lock);
 		m_ain_names = std::move(names);
-		m_ain_current = std::move(current);
 		m_ain_known = true;
+	}
+	// From the gui: the name of the device that is open now, empty for none.
+	void set_ain_current_fn(std::function<std::string()> fn)
+	{
+		std::lock_guard<std::mutex> lock(m_ain_lock);
+		m_ain_current_fn = std::move(fn);
 	}
 	bool ain_devices(std::vector<std::string> &names, std::string &current) const
 	{
 		std::lock_guard<std::mutex> lock(m_ain_lock);
 		names = m_ain_names;
-		current = m_ain_current;
+		current = m_ain_current_fn ? m_ain_current_fn() : std::string();
 		return m_ain_known;
 	}
 	void request_ain(int dev) { m_ain_want.store(dev, std::memory_order_relaxed); }
@@ -467,7 +496,7 @@ private:
 	sampling_view m_view;
 	mutable std::mutex m_ain_lock;
 	std::vector<std::string> m_ain_names;
-	std::string m_ain_current;
+	std::function<std::string()> m_ain_current_fn;
 	bool m_ain_known = false;
 	std::atomic<int> m_ain_want{-2};
 	std::atomic<bool> m_ain_list_want{false};
@@ -531,6 +560,7 @@ private:
 	std::atomic<u64>      m_buttons{0};
 	std::atomic<int>      m_wheel{0};
 	std::atomic<float>    m_gain{1.0f};
+	std::atomic<float>    m_ad_knob{AD_KNOB_DEFAULT};
 	std::atomic<float>    m_cpu{-1.0f};
 	std::atomic<int>      m_engine{-1};
 	std::atomic<unsigned> m_seq{0};

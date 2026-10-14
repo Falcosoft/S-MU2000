@@ -133,17 +133,42 @@ all add to this list before playing, so whichever way a song starts it can be co
   10,000 bytes a second for the USB port and 3,125 for DIN) before playing on. Songs with a lot of SysEx take a
   moment; `catching up the settings...` is shown meanwhile
 * **Bar, beat and tempo** are counted from the song's time signatures (`FF 58`) and tempo changes (`FF 51`)
+* **The list is remembered** (issue #211): whenever it changes it is written to `playlist.m3u` in the settings folder
+  and read back at the next start. The format is M3U (UTF-8 text, one file per line; other players read it too).
+  Songs that cannot be read at start are skipped, so they also drop out of the file the next time the list changes.
+  With `--nomidi` it is neither read nor written. Adding a `.m3u` / `.m3u8` file adds the songs listed in it
+  (relative paths are read from the playlist's folder)
 
 The plugins (VST3 and so on) do not have this window; there the DAW plays the song.
 
+### The keyboard window
+
+Open it with `Keyboard` on the bar at the top of the window (or `--keyboard-window`): a window with only a keyboard
+(issue #212), for playing the way a keyboard plugged into the unit's front MIDI IN A was played.
+
+* **Port and channel**: the MIDI input (A to D) and channel (1 to 16) the keys play into. The default is port A,
+  channel 1. C and D exist on USB only (parts 33-64)
+* **Keys**: five octaves. Press to play, slide to move to the next key. Lower on the key is louder (as on the other
+  keyboards); with `Fixed velocity` every key plays at the set velocity. `<` `>` move by an octave (the name is the
+  lowest key; middle C = C3)
+* **Bend and modulation**: the two strips on the left. Bend springs back to the middle; modulation (controller 1)
+  stays where it is left. `Sustain` switches controller 64
+* **PC keyboard**: the same layout as the list window's keyboard (the A row, Q row and number row are white keys,
+  Z flattens, X sharpens, PageUp / PageDown move the octave)
+
+Closing the window, or changing the port or channel, releases the held notes and resets bend, modulation and
+sustain. The plugins do not have this window (the DAW's keyboard plays them).
+
 ## Choosing MIDI ports
 
-**They can be chosen from the display while running.** Left-click the
-`MIDI IN A` jack drawn on the panel, or right-click anywhere in the window,
-for the menu.
+**Choose ports while running** from the panel's `MIDI IN A` menu or Settings → MIDI.
+The MIDI IN menu also has GM, GS / TG300B and XG resets for the emulator, plus Panic.
 
-At the bottom of the same menu is **"Restore factory settings..."**. After
-confirmation it discards the remembered settings (work RAM, `src/nvram.h`)
+Right-click anywhere to open the list (F3), the editor (F2), or Settings.
+Settings → Emulation contains Play effects in C++ and Play without the firmware.
+
+The **POWER menu** has Restart and **Factory reset...**. After confirmation,
+factory reset discards the remembered settings (work RAM, `src/nvram.h`)
 and powers up again. The start-up argument `--factory` does the same.
 
 ### Fast start-up (a snapshot after boot)
@@ -178,13 +203,20 @@ received data on).
 
 ### A/D INPUT (audio for sampling)
 
-Left-click the `A/D INPUT` jack on the panel, or use "A/D INPUT" in the
-right-click menu, to choose the **recording device** (WASAPI shared mode).
+Open the panel's `A/D INPUT` menu or Settings → Audio to choose the
+**recording device** (WASAPI shared mode).
 Left is AD1, right is AD2. Anything other than 44,100 Hz is converted
 internally. The chosen name is remembered as `audio_in` in `gui.ini` and
 opened at the next start. The default is "not used". It feeds sampling
 (SAMPLING → REC) and the A/D parts. The A/D part volume defaults to 0, so
 raise it when you want to hear the input.
+
+The panel's **A/D INPUT knob** sets the level of the incoming audio (on the
+hardware, the knob in front of the A/D converter). Drag it or turn it with the
+wheel. Where it starts is unity; fully left is silence, fully right about
++14 dB. Too much clips at 16 bits, as the converter would. It applies to
+sampling and to the A/D parts alike. The position is remembered as `ad_knob`
+in `gui.ini`.
 
 **When comparing with the real unit**, connect MIDI THRU A to the unit's
 first port and MIDI THRU B to its second. The same data from the sequencer
@@ -203,16 +235,30 @@ not lose the port you chose. Choosing again from the menu replaces it.
 ### Audio output (the PHONES jack)
 
 Left- or right-click the `PHONES` jack on the panel for the audio output
-menu. The choice is remembered as `output` (`digital` / `analog`) in
-`gui.ini`. The default is digital.
+menu, with playback device, stream sample rate and Limit output peaks controls.
+These are also in Settings → Audio. The digital/analog choice is remembered
+as `output` (`digital` / `analog`) in `gui.ini`. The default is digital.
 
 | Output | Contents |
 |---|---|
-| Digital | the same as the unit's S/PDIF. The DC that some DPCM samples carry (A2 and A5 of Alto Sax Legato, for instance) comes out as it is. Recorded from the unit's S/PDIF and compared, even the DC level matches to 0.1 LSB (issue #3) |
+| Digital | the same signal as the unit's S/PDIF, at the level the S/PDIF has **when UTIL → SYS `DigiOutGain` is +12 dB** (below). The DC that some DPCM samples carry (A2 and A5 of Alto Sax Legato, for instance) comes out as it is. Recorded from the unit's S/PDIF and compared, even the DC level matches to 0.1 LSB (issue #3) |
 | Analog | meant as LINE OUT / PHONES: DC is removed after the DAC (before the VOLUME knob) with a first-order high-pass (`src/analog_out.h`). Right after a sound with DC is released, a slow swing appears as what was removed comes back |
 
 **The analog cut-off (3 Hz) is a placeholder.** The unit's analog output has
 not been recorded yet; once measured, set `analog_out::CUTOFF_HZ` to match.
+
+**Output level and `DigiOutGain` (checked 2026-10-14).** The unit's UTIL → SYS `DigiOutGain` (0 / +6 / +12 dB,
+default 0) is a gain on the S/PDIF output only. The firmware rewrites the constants of the last two steps of the
+effect DSP (MEG steps 0x92 and 0x95, which produce `m2e` and `m2f`) to 0x0800, 0x1000 or 0x2000, and that pair
+goes out on S/PDIF. The emulator's outputs (digital and analog) are taken from the DAC pair (`m30`, `m31`): the
+same signal one sample earlier, at the level the S/PDIF has **when `DigiOutGain` is +12 dB**. Recorded from the
+unit's S/PDIF at the default 0 dB, the unit is 12 dB quieter than the emulator; at +12 dB the levels match too
+(single organ and piano notes agree in RMS to four digits).
+
+The item can be set in the emulator as well, and the firmware writes the same constants, but the output is the
+DAC pair, so the sound does not change. The output could follow it by taking the S/PDIF pair instead, but at the
+default 0 dB everyone's sound would drop by 12 dB, so it does not. To compare levels with the unit's S/PDIF,
+record the unit at +12 dB, or add 12 dB before comparing.
 
 ### When a port does not respond, or MIDI floods
 

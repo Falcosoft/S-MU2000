@@ -44,7 +44,6 @@ struct ui_texts {
 	const char *tab_editor;
 	const char *tab_effects;
 	// Front page hint (panel.cpp)
-	const char *hint_front;
 	// Editor page (editor.cpp)
 	const char *editor_hint;         // may contain \n
 	const char *editor_xg_reset;
@@ -86,6 +85,16 @@ struct ui_texts {
 	const char *menu_audio_title;
 	const char *menu_audio_default;
 	const char *menu_no_audio;
+	// iOS-only menu rows (Bluetooth/network setup, ROM import). Localized like
+	// every other row even though no desktop front end offers them, so their text
+	// is in locale/<code>/menus.json like the rest - the comment here becomes the
+	// note a translator reads.
+	const char *menu_bt_title;
+	const char *menu_bt_connect;
+	const char *menu_bt_advertise;
+	const char *menu_net_midi;
+	const char *menu_roms_title;
+	const char *menu_roms_install;
 	const char *audio_switch_failed_fmt; // %s: device and backend error
 	const char *menu_out_mu;
 	const char *menu_thru_a;
@@ -157,6 +166,7 @@ struct ui_texts {
 	const char *dlg_roms_pick;
 	const char *dlg_roms_quit;
 	const char *dlg_roms_ok_cancel;
+	const char *dlg_roms_installed;
 	const char *dlg_cancel;
 	// .syx file notes, shown in the master editor (produced by the
 	// pc_window backends and master_editor.cpp).
@@ -164,6 +174,10 @@ struct ui_texts {
 	const char *note_export_fail;
 	const char *note_imported;
 	const char *note_import_fail;
+	// iOS only: a picked file cannot be kept where it is (the grant dies with
+	// the process), so a copy lands in the app's own Documents folder, which
+	// Files shows as "On My iPhone > S-MU2000". %s is the folder name
+	const char *note_kept_fmt;
 	const char *note_sysex_busy_fmt; // %zu
 	const char *note_sysex_idle;
 	// XG editor shared (xg_ui.cpp): part parameter groups, the voice
@@ -389,6 +403,50 @@ struct ui_texts {
 	const char *fme_release;
 	const char *fme_save_fail;
 	const char *fme_drum_note;
+	// Harmonic board voice editor (harm_voice_editor.h)
+	const char *hme_set_tip;
+	const char *hme_frame_0;
+	const char *hme_frame_1;
+	const char *hme_frame_2;
+	const char *hme_frame_3;
+	const char *hme_frame_tip;
+	const char *hme_shape_saw;
+	const char *hme_shape_square;
+	const char *hme_shape_tri;
+	const char *hme_shape_organ;
+	const char *hme_shape_clear;
+	const char *hme_to_all;
+	const char *hme_to_all_tip;
+	const char *hme_bars_tip_fmt;
+	const char *hme_t_peak;
+	const char *hme_t_peak_tip;
+	const char *hme_t_sustain;
+	const char *hme_t_sustain_tip;
+	const char *hme_release_tip;
+	const char *hme_bright;
+	const char *hme_bright_tip;
+	const char *hme_inharm;
+	const char *hme_inharm_tip;
+	const char *hme_odd_even;
+	const char *hme_odd_even_tip;
+	const char *hme_morph;
+	const char *hme_morph_none;
+	const char *hme_morph_tip;
+	const char *hme_noise;
+	const char *hme_noise_tip;
+	const char *hme_noise_center;
+	const char *hme_noise_center_tip;
+	const char *hme_noise_width;
+	const char *hme_noise_decay;
+	const char *hme_noise_decay_tip;
+	const char *hme_listen;
+	const char *hme_listen_tip;
+	const char *hme_listen_load;
+	const char *hme_listen_fail;
+	const char *hme_listen_done_fmt;
+	const char *hme_listen_held;
+	const char *hme_listen_dying;
+	const char *hme_drum_note;
 	// Insertion editor (fx_editor.cpp); kind/part covered by fx_kind/fx_part.
 	const char *fxe_slider_tip_fmt;  // %s %s + how to turn
 	const char *fxe_noeffect;
@@ -432,6 +490,7 @@ struct ui_texts {
 	const char *me_board_user;
 	const char *me_board_user16;
 	const char *me_board_fm16;
+	const char *me_board_harm16;
 	const char *me_board_user_none;
 	const char *me_board_user_tip;
 	const char *me_board_user_empty;
@@ -645,6 +704,7 @@ struct ui_texts {
 	const char *bar_sampling;
 	const char *bar_player;
 	const char *bar_board;
+	const char *bar_keyboard;
 	const char *ply_idle;
 	const char *ply_prev;
 	const char *ply_play;
@@ -665,6 +725,22 @@ struct ui_texts {
 	const char *ply_clear;
 	const char *ply_path;
 	const char *ply_add_path;
+	const char *ply_list_empty;
+	// Keyboard window (keyboard_view.h, issue #212)
+	const char *kb_port;
+	const char *kb_port_tip;
+	const char *kb_channel;
+	const char *kb_fixed;
+	const char *kb_fixed_tip;
+	const char *kb_velocity_fmt;
+	const char *kb_octave_tip;
+	const char *kb_sustain;
+	const char *kb_all_off;
+	const char *kb_bend;
+	const char *kb_bend_tip;
+	const char *kb_mod;
+	const char *kb_mod_tip;
+	const char *kb_keys_tip;
 	const char *dlg_wav_desc;
 	const char *smp_not_ready;
 	const char *smp_input;
@@ -1036,6 +1112,18 @@ struct ui_texts {
 	const char *smp_make_bell_ratio;
 	const char *smp_make_bell_decay;
 	const char *smp_make_bell_note;
+	const char *smp_make_paint;
+	const char *smp_make_paint_clear;
+	const char *smp_make_paint_sweep;
+	const char *smp_make_paint_blink;
+	const char *smp_make_paint_dots;
+	const char *smp_make_paint_level;
+	const char *smp_make_paint_size;
+	const char *smp_make_paint_spacing;
+	const char *smp_make_paint_spacing_tip;
+	const char *smp_make_paint_tip;
+	const char *smp_make_paint_note;
+	const char *smp_make_view_loop_fmt;
 	const char *smp_make_vowel_morph;
 	const char *smp_make_vowel_to;
 	const char *smp_make_sine;
@@ -1115,6 +1203,39 @@ struct ui_texts {
 	const char *smp_card_m2a_tip;
 	const char *smp_card_m2a_warn;
 	const char *dlg_card_or_m2a_desc;
+	const char *settings_general;
+	const char *settings_language;
+	const char *settings_resampler;
+	const char *settings_sinc;
+	const char *settings_nearest;
+	const char *settings_driver;
+	const char *settings_control_panel;
+	const char *settings_title;
+	const char *settings_audio;
+	const char *settings_midi;
+	const char *settings_midi_inputs;
+	const char *settings_midi_outputs;
+	const char *settings_disconnected;
+	const char *settings_emulation;
+	const char *settings_native_fx;
+	const char *settings_thin_bends;
+	const char *settings_native_engine;
+	const char *settings_native_fx_tip;
+	const char *settings_thin_bends_tip;
+	const char *settings_native_engine_tip;
+	const char *settings_exclusive;
+	const char *settings_rate;
+	const char *settings_auto;
+	const char *settings_left;
+	const char *settings_right;
+	const char *settings_buffer;
+	const char *settings_latency;
+	const char *settings_opening;
+	const char *settings_volume;
+	const char *settings_dc;
+	const char *settings_limiter;
+	const char *settings_reset;
+	const char *settings_panic;
 };
 
 // Each language has one table function, <code>_texts(), in ui/texts_<code>.h.

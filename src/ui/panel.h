@@ -96,6 +96,7 @@ public:
 
 	// 音量つまみの見え方。音源側の値をそのまま渡してもらう
 	void set_volume(double v) { m_volume_now = v; }
+	void set_adgain(double v) { m_adgain_now = v; }   // A/D INPUT のつまみの位置（bridge::ad_knob）
 
 	// 論理座標の方眼を重ねる。絵の位置を直すときの物差し（doc/panel-editing.md）
 	void set_grid(bool on) { m_grid = on; }
@@ -253,7 +254,7 @@ private:
 	page m_page = page::front;
 	std::vector<spot> m_spots;
 	RECT m_adgain{};
-	RECT m_lcd{}, m_wheel{}, m_volume{}, m_status{}, m_hint{}, m_leds[6]{};
+	RECT m_lcd{}, m_wheel{}, m_volume{}, m_status{}, m_leds[6]{};
 
 	// 掴んでいるもの
 	const spot *m_held = nullptr;
