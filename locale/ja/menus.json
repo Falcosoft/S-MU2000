@@ -109,5 +109,7 @@
 	"bar_player": "プレイヤー",
 	"bar_board": "ボード",
 	"dlg_wav_desc": "WAV の音か SysEx",
-	"dlg_card_or_m2a_desc": "SmartMedia の中身か M2A のファイル"
+	"dlg_card_or_m2a_desc": "SmartMedia の中身か M2A のファイル",
+	// Keyboard window button (toolbar.h)
+	"bar_keyboard": "鍵盤"
 }

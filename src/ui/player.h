@@ -84,6 +84,9 @@ public:
 	void remove(int index);              // 鳴らしている曲を消したら止まる
 	void move(int from, int to);         // 並べ替え
 	void clear();                        // 止めて、全部消す
+	// 一覧が変わるたびに増える数（保存する側が、変わったかを見る）と、一覧の道だけ（中身がメモリにだけある曲は除く）
+	unsigned revision() const { return m_rev.load(std::memory_order_relaxed); }
+	std::vector<std::string> paths() const;
 
 	// ---- 操作
 	void play(int index, bridge &br);    // その曲を頭から
@@ -120,6 +123,7 @@ private:
 	std::atomic<bool>  m_playing{false};
 	std::atomic<int>   m_state{0};
 	std::atomic<int>   m_cur{-1};
+	std::atomic<unsigned> m_rev{0};    // revision()
 	std::atomic<int>   m_jump{-1};       // この番号の曲へ（-1 = なし）
 	std::atomic<int>   m_step{0};        // +1 = 次、-1 = 前
 	std::atomic<bool>  m_paused{false};

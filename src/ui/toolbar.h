@@ -46,6 +46,7 @@ enum bar_window {
 	BAR_PLAYER = 6, // MIDI プレイヤー（gui だけ。プラグインの帯には出さない）
 	BAR_SETTINGS = 8, // standalone device/emulation settings
 	BAR_BOARD = 7,  // プラグインボード（gui だけ）
+	BAR_KEYBOARD = 9, // 鍵盤だけの窓（gui だけ。issue #212）
 };
 
 // The strip every window shows, in the same order with the same ids.
@@ -59,10 +60,11 @@ inline std::vector<tool_item> window_bar_items(bool with_player = false)
 	         { UI_TEXT(bar_fx, "Effects"), BAR_FX },
 	         { UI_TEXT(bar_master, "Master"), BAR_MASTER },
 	         { UI_TEXT(bar_sampling, "Sampling"), BAR_SAMPLING } };
-	// gui だけが持つ窓: プラグインボードと MIDI プレイヤー
+	// gui だけが持つ窓: プラグインボード、MIDI プレイヤー、鍵盤
 	if (with_player) {
 		items.push_back({ UI_TEXT(bar_board, "Boards"), BAR_BOARD });
 		items.push_back({ UI_TEXT(bar_player, "Player"), BAR_PLAYER });
+		items.push_back({ UI_TEXT(bar_keyboard, "Keyboard"), BAR_KEYBOARD });
 		items.push_back({ UI_TEXT(settings_title, "Settings..."), BAR_SETTINGS });
 	}
 	return items;
