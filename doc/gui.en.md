@@ -153,8 +153,10 @@ Open it with `Keyboard` on the bar at the top of the window (or `--keyboard-wind
   lowest key; middle C = C3)
 * **Bend and modulation**: the two strips on the left. Bend springs back to the middle; modulation (controller 1)
   stays where it is left. `Sustain` switches controller 64
-* **PC keyboard**: the same layout as the list window's keyboard (the A row, Q row and number row are white keys,
-  Z flattens, X sharpens, PageUp / PageDown move the octave)
+* **PC keyboard**: laid out like a piano. `Z X C V B N M` are white keys with `S D G H J` as the black keys
+  between them (the keyboard's second octave); `Q W E R T Y U I O P` are the white keys an octave higher with
+  `2 3 5 6 7 9 0` as the black keys. The letters are drawn on the keys they play. PageUp / PageDown move the octave.
+  Only letter and digit keys are used, so the places are the same on other layouts such as Japanese
 
 Closing the window, or changing the port or channel, releases the held notes and resets bend, modulation and
 sustain. The plugins do not have this window (the DAW's keyboard plays them).

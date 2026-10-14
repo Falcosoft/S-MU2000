@@ -653,7 +653,7 @@ inline const ui_texts &en_texts()
 		.kb_bend_tip = "Pitch bend\nDrag up or down; it springs back to the middle when released.",
 		.kb_mod = "Mod",
 		.kb_mod_tip = "Modulation wheel (controller 1)\nStays where you leave it.",
-		.kb_keys_tip = "Press a key to play it; slide to move to the next key. Lower on the key is louder (unless Fixed velocity is on).\nPC keyboard plays too, white keys only: the A row from the lowest C, the Q row an octave up, the number row another octave up. Hold Z to flatten or X to sharpen what you play. PageUp / PageDown move the octave.",
+		.kb_keys_tip = "Press a key to play it; slide to move to the next key. Lower on the key is louder (unless Fixed velocity is on).\nThe PC keyboard plays it like a piano: Z X C V B N M are white keys with S D G H J as the black keys between them, and Q W E R T Y U I O P are white keys an octave higher with 2 3 5 6 7 9 0 as the black keys. The letters on the keys show which is which. PageUp / PageDown move the octave.",
 		.dlg_wav_desc = "WAV audio or SysEx",
 		.smp_not_ready = "Waiting for the MU2000 to start...",
 		.smp_input = "Input",

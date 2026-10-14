@@ -5,8 +5,8 @@
 //   ・5 オクターブの鍵盤。押すと鳴り、押したまま横へずらすと隣の鍵へ移る。鍵の下ほど強い（ほかの窓の鍵盤と同じ）。
 //     「強さ一定」にすると、どこを押しても決めた強さ
 //   ・ピッチベンド（離すと真ん中へ戻る）とモジュレーションの縦の帯、サステイン（CC64）の切り替え
-//   ・PC のキーボードでも弾ける（一覧の窓の鍵盤と同じ並び: A 段・Q 段・数字の段が白鍵、Z で半音下・X で半音上、
-//     PageUp / PageDown でオクターブ）
+//   ・PC のキーボードでも弾ける。キーの並びが鍵盤の形になる割り当て（下の段 Z〜M と S D G H J、上の段 Q〜P と
+//     2 3 5 6 7 9 0。PageUp / PageDown でオクターブ）。どのキーがどの鍵かは鍵盤の上に字で出す
 // 窓を閉じたり隠したりしたら、押さえていた音を全部離す
 
 #ifndef S_MU2000_UI_KEYBOARD_VIEW_H
@@ -152,7 +152,24 @@ public:
 
 private:
 	static constexpr int OCTAVES = 5, KEYS = OCTAVES * 12 + 1;
-	static constexpr int PC_KEYS = 37;
+	// PC のキーボードの割り当て。キーの並びがそのまま鍵盤の形になる（DAW やトラッカーでよく使う形）:
+	//   下の段  Z X C V B N M が白鍵、その上の S D G H J が黒鍵（鍵盤の 2 つ目のオクターブ。ちょうど 1 オクターブ）
+	//   上の段  Q W E R T Y U I O P が白鍵、その上の 2 3 5 6 7 9 0 が黒鍵（そのさらに 1 オクターブ上から）
+	// 文字と数字のキーだけを使う（記号のキーは配列で場所が違う）。下の段を M で止めるのは、上の段と同じ鍵に重ならないように
+	struct pc_key { ImGuiKey key; int row; int semi; const char *label; };
+	static constexpr pc_key PC_MAP[] = {
+		{ ImGuiKey_Z, 0, 0, "Z" }, { ImGuiKey_S, 0, 1, "S" }, { ImGuiKey_X, 0, 2, "X" }, { ImGuiKey_D, 0, 3, "D" },
+		{ ImGuiKey_C, 0, 4, "C" }, { ImGuiKey_V, 0, 5, "V" }, { ImGuiKey_G, 0, 6, "G" }, { ImGuiKey_B, 0, 7, "B" },
+		{ ImGuiKey_H, 0, 8, "H" }, { ImGuiKey_N, 0, 9, "N" }, { ImGuiKey_J, 0, 10, "J" }, { ImGuiKey_M, 0, 11, "M" },
+		{ ImGuiKey_Q, 1, 0, "Q" }, { ImGuiKey_2, 1, 1, "2" }, { ImGuiKey_W, 1, 2, "W" }, { ImGuiKey_3, 1, 3, "3" },
+		{ ImGuiKey_E, 1, 4, "E" }, { ImGuiKey_R, 1, 5, "R" }, { ImGuiKey_5, 1, 6, "5" }, { ImGuiKey_T, 1, 7, "T" },
+		{ ImGuiKey_6, 1, 8, "6" }, { ImGuiKey_Y, 1, 9, "Y" }, { ImGuiKey_7, 1, 10, "7" }, { ImGuiKey_U, 1, 11, "U" },
+		{ ImGuiKey_I, 1, 12, "I" }, { ImGuiKey_9, 1, 13, "9" }, { ImGuiKey_O, 1, 14, "O" }, { ImGuiKey_0, 1, 15, "0" },
+		{ ImGuiKey_P, 1, 16, "P" },
+	};
+	static constexpr int PC_KEYS = int(sizeof(PC_MAP) / sizeof(PC_MAP[0]));
+	// その PC のキーで鳴る鍵（下の段は鍵盤の 2 つ目のオクターブ、上の段はその上から）
+	int pc_note(int i) const { return m_base + 12 * (PC_MAP[i].row + 1) + PC_MAP[i].semi; }
 
 	// 鍵 n（窓の左端からの 0 始まり）の左右の端と、黒鍵か
 	struct key_box { float x0, x1; bool black; };
@@ -202,7 +219,7 @@ private:
 				note(want, true, vel, br);
 		}
 		if (ImGui::IsItemHovered() && !down)
-			xgui::hint("%s", UI_TEXT(kb_keys_tip, "Press a key to play it; slide to move to the next key. Lower on the key is louder (unless Fixed velocity is on).\nPC keyboard plays too, white keys only: the A row from the lowest C, the Q row an octave up, the number row another octave up. Hold Z to flatten or X to sharpen what you play. PageUp / PageDown move the octave."));
+			xgui::hint("%s", UI_TEXT(kb_keys_tip, "Press a key to play it; slide to move to the next key. Lower on the key is louder (unless Fixed velocity is on).\nThe PC keyboard plays it like a piano: Z X C V B N M are white keys with S D G H J as the black keys between them, and Q W E R T Y U I O P are white keys an octave higher with 2 3 5 6 7 9 0 as the black keys. The letters on the keys show which is which. PageUp / PageDown move the octave."));
 		// 白鍵、黒鍵の順に描く。押さえている鍵は橙
 		for (int pass = 0; pass < 2; pass++)
 			for (int n = 0; n < KEYS; n++) {
@@ -212,6 +229,12 @@ private:
 				const bool on = m_held[size_t(m_base + n)] > 0;
 				const ImU32 c = on ? IM_COL32(236, 116, 70, 255) : b.black ? IM_COL32(30, 30, 32, 255) : IM_COL32(222, 222, 216, 255);
 				dl->AddRectFilled(ImVec2(b.x0, p.y), ImVec2(b.x1, p.y + (b.black ? black_h : h)), c, b.black ? 2.0f : 3.0f);
+				for (int i = 0; i < PC_KEYS; i++)
+					if (pc_note(i) == m_base + n) {
+						const ImVec2 ts = ImGui::CalcTextSize(PC_MAP[i].label);
+						const float y = b.black ? p.y + black_h - ts.y - 3 : p.y + h * 0.62f;
+						dl->AddText(ImVec2((b.x0 + b.x1 - ts.x) * 0.5f, y), b.black ? IM_COL32(170, 200, 230, 255) : IM_COL32(60, 110, 170, 255), PC_MAP[i].label);
+					}
 				if (!b.black && (m_base + n) % 12 == 0) {
 					char name[8];
 					std::snprintf(name, sizeof(name), "C%d", (m_base + n) / 12 - 2);
@@ -221,23 +244,13 @@ private:
 			}
 	}
 
-	// PC のキーボード（一覧の窓の鍵盤と同じ並び）
+	// PC のキーボード（上の PC_MAP の割り当て）
 	void pc_keys(bridge &br)
 	{
-		static constexpr ImGuiKey KEYS_PC[PC_KEYS] = {
-			ImGuiKey_A, ImGuiKey_S, ImGuiKey_D, ImGuiKey_F, ImGuiKey_G, ImGuiKey_H, ImGuiKey_J, ImGuiKey_K,
-			ImGuiKey_L, ImGuiKey_Semicolon, ImGuiKey_Apostrophe, ImGuiKey_Backslash,
-			ImGuiKey_Q, ImGuiKey_W, ImGuiKey_E, ImGuiKey_R, ImGuiKey_T, ImGuiKey_Y, ImGuiKey_U, ImGuiKey_I,
-			ImGuiKey_O, ImGuiKey_P, ImGuiKey_LeftBracket, ImGuiKey_RightBracket,
-			ImGuiKey_1, ImGuiKey_2, ImGuiKey_3, ImGuiKey_4, ImGuiKey_5, ImGuiKey_6, ImGuiKey_7, ImGuiKey_8,
-			ImGuiKey_9, ImGuiKey_0, ImGuiKey_Minus, ImGuiKey_Equal, ImGuiKey_Oem102,
-		};
-		static constexpr int WHITE[13] = { 0, 2, 4, 5, 7, 9, 11, 12, 14, 16, 17, 19, 21 };
-		const auto offset = [](int i) { return i < 12 ? WHITE[i] : i < 24 ? 12 + WHITE[i - 12] : 24 + WHITE[i - 24]; };
 		for (int i = 0; i < PC_KEYS; i++)
-			if (m_pc_note[i] >= 0 && !ImGui::IsKeyDown(KEYS_PC[i])) {
-				note(m_pc_note[i], false, 0, br);
-				m_pc_note[i] = -1;
+			if (m_pc_note[size_t(i)] >= 0 && !ImGui::IsKeyDown(PC_MAP[i].key)) {
+				note(m_pc_note[size_t(i)], false, 0, br);
+				m_pc_note[size_t(i)] = -1;
 			}
 		const ImGuiIO &io = ImGui::GetIO();
 		if (io.WantTextInput || io.KeyCtrl || io.KeyAlt || !ImGui::IsWindowFocused(ImGuiFocusedFlags_RootAndChildWindows))
@@ -246,15 +259,14 @@ private:
 			shift_octave(-1, br);
 		if (ImGui::IsKeyPressed(ImGuiKey_PageUp, false))
 			shift_octave(+1, br);
-		const int semi = (ImGui::IsKeyDown(ImGuiKey_X) ? 1 : 0) - (ImGui::IsKeyDown(ImGuiKey_Z) ? 1 : 0);
 		for (int i = 0; i < PC_KEYS; i++) {
-			if (!ImGui::IsKeyPressed(KEYS_PC[i], false) || m_pc_note[i] >= 0)
+			if (!ImGui::IsKeyPressed(PC_MAP[i].key, false) || m_pc_note[size_t(i)] >= 0)
 				continue;
-			const int n = m_base + offset(i) + semi;
+			const int n = pc_note(i);
 			if (n < 0 || n > 127)
 				continue;
 			note(n, true, m_velocity, br);
-			m_pc_note[i] = n;
+			m_pc_note[size_t(i)] = n;
 		}
 	}
 
