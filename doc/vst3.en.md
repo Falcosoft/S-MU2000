@@ -345,9 +345,10 @@ Per DAW:
 | Cakewalk Sonar | **Yes.** Each MIDI track chooses its destination (bus A / B) and channel. 32 parts | [doc/sonar.md](sonar.md) |
 | Reason | No. One track, one instrument, part 1 only. Also the case of a program change freezing the MIDI loop | [doc/reason.md](reason.md) |
 
-## Four MIDI input buses
+## Five MIDI input buses
 
-Like the hardware's MIDI IN A-D, there are **four input buses**.
+Like the hardware's MIDI IN A-D, there are **four input buses for the
+unit**, and a fifth for the 16-part plug-in board (issue #221).
 
 | Bus | Reaches |
 |---|---|
@@ -355,6 +356,12 @@ Like the hardware's MIDI IN A-D, there are **four input buses**.
 | `MIDI In B (Part 17-32)` | parts 17-32 |
 | `MIDI In C (Part 33-48)` | parts 33-48; USB-only on the hardware |
 | `MIDI In D (Part 49-64)` | parts 49-64; likewise USB-only |
+| `MIDI In E (Board)` | port E: the 16 parts of a multi-part board (FC16, DLS, FM, harmonic, a user 16-part board). It does not reach the unit's firmware |
+
+CLAP has the same five note ports and AUv3 five cables. VST2 and AUv2 have
+only one MIDI input: there, tick **Send MIDI IN A to port E** in the panel's
+right-click menu (or put `F5 05` in front of the messages, the cable message
+the GUI uses too). Port E only sounds while a multi-part board is plugged in.
 
 C and D only arrive **when HOST SELECT is USB**, which is the default (`usb=0`
 in `plugin.ini` returns to DIN with A and B only; [doc/gui.md](gui.md)). Some
@@ -464,6 +471,23 @@ contents are the same as gui.exe. See [doc/gui.md](gui.md).
 **Right-click the panel to open the same "list" and "editor" as gui.exe**
 ([doc/pc-editor.md](pc-editor.md)). See and touch the 64 parts' voices,
 volumes and effect sends there. The same menu has the SmartMedia swap.
+
+The same menu, and the **Boards** button on the bar at the top, open the
+**plug-in board window**, the same one as gui.exe's (issue #221; slots
+PLG-1 to PLG-6 and the 16 channels of a multi-part board,
+[doc/vboard.md](vboard.md)). The menu also has:
+
+- **Sound output**: *Digital* (as S/PDIF, the default) or *Analog* (as LINE
+  OUT and PHONES; the DC is cut), the same switch as gui.exe's PHONES menu
+- **Send MIDI IN A to port E (16-part board)**: for hosts with only one MIDI
+  input (above)
+
+These two and the boards that are plugged in (the kind and part of each
+slot, and the files of a DLS board, a user board and the FC/FM/harmonic voice
+sets) are **saved with the project**. They ride behind the machine state, so
+a project saved this way still opens in an older version (the extra is
+ignored there). On opening, the boards go in before the machine state is put
+back, so the firmware finds them as it was saved, without a power cycle.
 
 These are the same `ui::pc_window` as gui.exe, and **the plug-in owns those
 windows** (only the panel fits inside the host's parent). Each window has

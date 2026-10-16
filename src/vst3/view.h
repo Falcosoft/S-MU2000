@@ -29,6 +29,8 @@
 #include <memory>
 #include <string>
 
+namespace ui { struct plug_menu_state; }
+
 namespace smu2000 {
 namespace vst3 {
 
@@ -108,6 +110,15 @@ public:
 	void card_insert_path(const std::string &path);
 	void card_eject();
 	void card_tick();                                  // flush every 2 seconds
+
+	// ---- The panel's right-click menu (plug_window::panel_menu, ui::menu_plug_panel)
+	//
+	// What it shows (the card too, so card_menu can use it), and the choices that
+	// are the same on every platform: the sound output and MIDI IN A to port E
+	// (issue #221). menu_command answers false for any other id, which the window
+	// then handles itself (opening windows, file dialogs)
+	ui::plug_menu_state menu_state() const;
+	bool menu_command(int id);
 
 private:
 	void card_error(const std::string &err);           // log it and tell the user

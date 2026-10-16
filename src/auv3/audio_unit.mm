@@ -54,8 +54,9 @@
 namespace {
 
 constexpr AUAudioFrameCount MAX_FRAMES = 4096;
-// MIDI IN A-D。機械の口の数から取るので、増えたら付いてくる
-constexpr int PORTS = mu2000::MIDI_PORTS;
+// MIDI IN A-D と、その後ろの口 E（マルチパートのプラグインボードだけが聞く。issue #221）。
+// 機械の口の数から取るので、増えたら付いてくる
+constexpr int PORTS = mu2000::MIDI_PORTS + 1;
 
 // 描き出しの中で使う器。確保はここではしない（allocateRenderResources で済ませる）
 struct scratch {
@@ -104,14 +105,14 @@ void hush_engine(smu2000::plug::engine *eng, scratch *sc)
 {
 	if (!eng || !sc)
 		return;
-	uint16_t mask[mu2000::MIDI_PORTS] = {};
+	uint16_t mask[PORTS] = {};
 	bool any = false;
 	for (int p = 0; p < PORTS; p++) {
 		mask[p] = sc->sounded[p].exchange(0);
 		any = any || mask[p];
 	}
 	if (any)
-		eng->all_notes_off(mask, mu2000::MIDI_PORTS);
+		eng->all_notes_off(mask, PORTS);
 }
 
 // UMP（MIDI 1.0）の event-list を昔のバイト列に戻して engine へ。
@@ -305,7 +306,7 @@ void feed_ump(smu2000::plug::engine *eng, scratch *sc, const AUMIDIEventList &ev
 // MPE は実機に無い
 - (BOOL)supportsMPE { return NO; }
 
-// 実機の MIDI IN は 4 口ある。ここで 4 と言わないとホストは数を信じて、
+// 実機の MIDI IN は 4 口ある（とボードの口 E で 5）。ここで言わないとホストは数を信じて、
 // 使わないケーブルは届かなくなる。ファイルを鳴らす種類のホストは
 // 代わりに口ごとに音源をもう 1 台開くことがある
 - (NSInteger)virtualMIDICableCount { return PORTS; }

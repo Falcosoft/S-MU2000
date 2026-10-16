@@ -45,14 +45,14 @@ enum bar_window {
 	BAR_SAMPLING = 5, // サンプリング
 	BAR_PLAYER = 6, // MIDI プレイヤー（gui だけ。プラグインの帯には出さない）
 	BAR_SETTINGS = 8, // standalone device/emulation settings
-	BAR_BOARD = 7,  // プラグインボード（gui だけ）
+	BAR_BOARD = 7,  // プラグインボード（gui と、プラグインの窓。issue #221）
 	BAR_KEYBOARD = 9, // 鍵盤だけの窓（gui だけ。issue #212）
 };
 
 // The strip every window shows, in the same order with the same ids.
 // Labels come from the texts table (bar_list and friends), so --lang
 // reaches the strip too.
-inline std::vector<tool_item> window_bar_items(bool with_player = false)
+inline std::vector<tool_item> window_bar_items(bool with_player = false, bool with_boards = false)
 {
 	std::vector<tool_item> items = { { UI_TEXT(bar_list, "List"), BAR_LIST },
 	         { UI_TEXT(bar_editor, "Editor"), BAR_EDITOR },
@@ -60,9 +60,10 @@ inline std::vector<tool_item> window_bar_items(bool with_player = false)
 	         { UI_TEXT(bar_fx, "Effects"), BAR_FX },
 	         { UI_TEXT(bar_master, "Master"), BAR_MASTER },
 	         { UI_TEXT(bar_sampling, "Sampling"), BAR_SAMPLING } };
-	// gui だけが持つ窓: プラグインボード、MIDI プレイヤー、鍵盤
-	if (with_player) {
+	// gui だけが持つ窓: MIDI プレイヤー、鍵盤。プラグインボードの窓はプラグインにもある（issue #221）
+	if (with_player || with_boards)
 		items.push_back({ UI_TEXT(bar_board, "Boards"), BAR_BOARD });
+	if (with_player) {
 		items.push_back({ UI_TEXT(bar_player, "Player"), BAR_PLAYER });
 		items.push_back({ UI_TEXT(bar_keyboard, "Keyboard"), BAR_KEYBOARD });
 		items.push_back({ UI_TEXT(settings_title, "Settings..."), BAR_SETTINGS });

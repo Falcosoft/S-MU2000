@@ -182,12 +182,16 @@ struct menu_state {
 enum : int {
 	ID_PLUG_CARD_NEW16 = 100, ID_PLUG_CARD_NEW32, ID_PLUG_CARD_NEW64, ID_PLUG_CARD_NEW128,
 	ID_PLUG_CARD_OPEN = 110, ID_PLUG_CARD_EJECT = 111,
-	ID_PLUG_LIST = 120, ID_PLUG_EDITOR = 121,
+	ID_PLUG_LIST = 120, ID_PLUG_EDITOR = 121, ID_PLUG_BOARDS = 122,
+	// The sound output and port E (issue #221). plug_view::menu_command handles these
+	ID_PLUG_OUT_DIGITAL = 130, ID_PLUG_OUT_ANALOG = 131, ID_PLUG_A_TO_E = 132,
 };
 
 struct plug_menu_state {
 	std::string card_path;   // the SmartMedia image in the slot (empty is none)
 	bool card_ready = false; // the engine is up enough to swap images
+	bool analog = false;     // the sound output: analogue (DC cut) or digital
+	bool a_to_e = false;     // MIDI IN A goes to port E (the 16-part board)
 };
 
 namespace menu_detail {
@@ -430,14 +434,22 @@ inline std::vector<menu_group> menu_plug_card(const plug_menu_state &s)
 	return groups;
 }
 
-// A plug-in right click that missed the card slot: the PC editor windows
-inline std::vector<menu_group> menu_plug_panel()
+// A plug-in right click that missed the card slot: the PC editor windows,
+// the plug-in boards, the sound output and port E (issue #221)
+inline std::vector<menu_group> menu_plug_panel(const plug_menu_state &s)
 {
 	using namespace menu_detail;
 	menu_group g;
 	g.items.push_back(text(UI_TEXT(menu_open_list, "Open the list"), ID_PLUG_LIST, false, true));
 	g.items.push_back(text(UI_TEXT(menu_open_editor, "Open the editor"), ID_PLUG_EDITOR, false, true));
-	return { g };
+	g.items.push_back(text(UI_TEXT(me_board_open, "Plug-in boards..."), ID_PLUG_BOARDS, false, true));
+	g.items.push_back(separator());
+	g.items.push_back(text(UI_TEXT(menu_plug_a_to_e, "Send MIDI IN A to port E (16-part board)"), ID_PLUG_A_TO_E, s.a_to_e, true));
+	menu_group out;
+	out.title = UI_TEXT(menu_out_title, "Sound output");
+	out.items.push_back(text(UI_TEXT(menu_out_digital, "Digital (S/PDIF; keeps DPCM DC)"), ID_PLUG_OUT_DIGITAL, !s.analog, true));
+	out.items.push_back(text(UI_TEXT(menu_out_analog, "Analog (LINE OUT/PHONES; cuts DC)"), ID_PLUG_OUT_ANALOG, s.analog, true));
+	return { g, out };
 }
 
 } // namespace ui

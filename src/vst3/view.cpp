@@ -16,8 +16,10 @@
 #include "smartmedia.h"
 #include "ui/bridge.h"
 #include "ui/layout.h"
+#include "ui/menu.h"
 #include "ui/panel.h"
 #include "ui/toolbar.h"
+#include "ui/xg_ui.h"
 
 #include <algorithm>
 #include <cstdio>
@@ -149,9 +151,12 @@ struct plug_view::impl
 		// The bar ids are the pc_kind the view dispatches (open_pc_window)
 		static_assert(int(ui::BAR_LIST) == PC_LIST && int(ui::BAR_EDITOR) == PC_EDITOR &&
 		              int(ui::BAR_FX) == PC_FX && int(ui::BAR_SHAPES) == PC_SHAPES &&
-		              int(ui::BAR_MASTER) == PC_MASTER && int(ui::BAR_SAMPLING) == PC_SAMPLING,
+		              int(ui::BAR_MASTER) == PC_MASTER && int(ui::BAR_SAMPLING) == PC_SAMPLING &&
+		              int(ui::BAR_BOARD) == PC_BOARDS,
 		              "bar ids are pc_kind");
-		bar.set_items(ui::window_bar_items());
+		bar.set_items(ui::window_bar_items(false, true));
+		// プラグインにもボードの窓がある（issue #221）。マスターの窓は、ボードの欄の代わりに開くボタンを出す
+		ui::xgui::set_board_window(true);
 		panel.set_top_inset(ui::toolbar::HEIGHT);
 	}
 
@@ -468,6 +473,33 @@ bool plug_view::card_slot_at(int x, int y) const { return m_impl->panel.on_card_
 bool plug_view::card_ready() const { return m_engine.state() == status::ready; }
 
 std::string plug_view::card_path() const { return m_engine.card_path(); }
+
+ui::plug_menu_state plug_view::menu_state() const
+{
+	ui::plug_menu_state s;
+	s.card_path = card_path();
+	s.card_ready = card_ready();
+	s.analog = m_engine.analog();
+	s.a_to_e = m_engine.a_to_e();
+	return s;
+}
+
+bool plug_view::menu_command(int id)
+{
+	if (id == ui::ID_PLUG_OUT_DIGITAL || id == ui::ID_PLUG_OUT_ANALOG) {
+		const bool on = id == ui::ID_PLUG_OUT_ANALOG;
+		m_engine.set_analog(on);
+		m_engine.log_line(on ? "音の出口: アナログ（直流を切る）" : "音の出口: デジタル");
+		return true;
+	}
+	if (id == ui::ID_PLUG_A_TO_E) {
+		const bool on = !m_engine.a_to_e();
+		m_engine.set_a_to_e(on);
+		m_engine.log_line(on ? "MIDI IN A を口 E（16 パートのボード）へ回す" : "MIDI IN A は本体のパート 1-16 へ");
+		return true;
+	}
+	return false;
+}
 
 // A failure has nowhere to go on the panel itself, so it goes to the log
 // (engine) and to the user (the window's alert)

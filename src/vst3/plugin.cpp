@@ -140,6 +140,9 @@ constexpr ParamID kStatusId = 4097;
 // **保存した曲が覚えているので動かさない**。B 以降は離れた所から 8192 刻みで並べる。
 // C・D は実機では USB だけの口
 constexpr int32   kPorts      = mu2000::MIDI_PORTS;
+// MIDI の入口は A-D と、口 E（マルチパートのプラグインボード。issue #221）。
+// パラメータとユニットは A-D のぶんだけ（口 E は本体のパートではない。番号を変えると保存したオートメーションがずれる）
+constexpr int32   kBuses      = kPorts + 1;
 constexpr ParamID kPortBase[4] = { 0, 8192, 16384, 24576 };
 // MIDI の口のパラメータと Output / Status。XG の値はその後ろに並べる（xg_first）
 constexpr int32   kMidiParamCount = kPorts * kMidiParams + 2;
@@ -341,7 +344,7 @@ public:
 	int32 PLUGIN_API getBusCount(MediaType type, BusDirection dir) override
 	{
 		if (type == kAudio) return 1;          // 出力 1 つと、A/D INPUT の入力 1 つ
-		if (type == kEvent) return dir == kInput  ? kPorts : 0;
+		if (type == kEvent) return dir == kInput  ? kBuses : 0;
 		return 0;
 	}
 
@@ -368,14 +371,15 @@ public:
 			bus.flags   = m_fx ? uint32(BusInfo::kDefaultActive) : 0;
 			return kResultOk;
 		}
-		if (type == kEvent && dir == kInput && index >= 0 && index < kPorts) {
+		if (type == kEvent && dir == kInput && index >= 0 && index < kBuses) {
 			bus.mediaType    = kEvent;
 			bus.direction    = kInput;
 			bus.channelCount = 16;
 			// 実機の MIDI IN A-D。B はパート 17-32、C は 33-48、D は 49-64 に届く。
-			// C・D は実機では USB だけの口
-			static const char *NAMES[4] = { "MIDI In A (Part 1-16)", "MIDI In B (Part 17-32)",
-			                                "MIDI In C (Part 33-48)", "MIDI In D (Part 49-64)" };
+			// C・D は実機では USB だけの口。E はマルチパートのプラグインボード（FM・DLS などの 16 パート）だけが聞く
+			static const char *NAMES[kBuses] = { "MIDI In A (Part 1-16)", "MIDI In B (Part 17-32)",
+			                                     "MIDI In C (Part 33-48)", "MIDI In D (Part 49-64)",
+			                                     "MIDI In E (Board)" };
 			set_str(bus.name, NAMES[index]);
 			bus.busType = index == 0 ? kMain : kAux;
 			bus.flags   = BusInfo::kDefaultActive;
@@ -438,14 +442,21 @@ public:
 			              a[0].load(std::memory_order_relaxed), a[1].load(std::memory_order_relaxed),
 			              a[2].load(std::memory_order_relaxed), a[3].load(std::memory_order_relaxed));
 		};
+		// 届いたものは口 E も（A B C D E）
+		auto five = [](const std::atomic<uint32_t> *a, char *out, size_t n) {
+			std::snprintf(out, n, "A %u / B %u / C %u / D %u / E %u",
+			              a[0].load(std::memory_order_relaxed), a[1].load(std::memory_order_relaxed),
+			              a[2].load(std::memory_order_relaxed), a[3].load(std::memory_order_relaxed),
+			              a[4].load(std::memory_order_relaxed));
+		};
 		char a[96], b[96], c[96], d[96], e[96], f[96], g[96];
-		four(m_got_on, f, sizeof(f));
-		four(m_got_off, g, sizeof(g));
+		five(m_got_on, f, sizeof(f));
+		five(m_got_off, g, sizeof(g));
 		four(m_q_ctrl, a, sizeof(a));
 		four(m_q_unit, b, sizeof(b));
 		four(m_got_cc, c, sizeof(c));
 		four(m_got_pc, d, sizeof(d));
-		four(m_got_ev, e, sizeof(e));
+		five(m_got_ev, e, sizeof(e));
 		char line2[900];
 		std::snprintf(line2, sizeof(line2),
 		              "口ごとの内訳: CC の対応の問い合わせ [%s]、音色のユニットの問い合わせ [%s]、"
@@ -962,7 +973,7 @@ private:
 		}
 		// 鳴らしたチャンネルを覚えておく。止めるときはここだけに流す（下の m_hush）
 		if ((a & 0xf0) == 0x90 && c)
-			m_sounded[port & 3] |= uint16(1u << (a & 15));
+			m_sounded[port >= 0 && port < kBuses ? port : 0] |= uint16(1u << (a & 15));
 		msg m{ off, int32(m_msgs.size()), uint8(port), uint8(n), {}, nullptr, 0 };
 		m.b[0] = a; m.b[1] = b; m.b[2] = c;
 		m_msgs.push_back(m);
@@ -1051,10 +1062,10 @@ private:
 	// [口]。q_ctrl は CC の対応の問い合わせ、q_unit はプログラムチェンジのユニットの問い合わせ
 	// （どちらも本スレッド）、got_* は届いたもの（音声の糸）
 	std::atomic<uint32_t> m_q_ctrl[kPorts] = {}, m_q_unit[kPorts] = {};
-	std::atomic<uint32_t> m_got_cc[kPorts] = {}, m_got_pc[kPorts] = {}, m_got_ev[kPorts] = {};
+	std::atomic<uint32_t> m_got_cc[kPorts] = {}, m_got_pc[kPorts] = {}, m_got_ev[kBuses] = {};
 	// ノートオン・ノートオフ（ベロシティ 0 のノートオンを含む）。数が合わなければ、
 	// ホストから届く前に離しが落ちている
-	std::atomic<uint32_t> m_got_on[kPorts] = {}, m_got_off[kPorts] = {};
+	std::atomic<uint32_t> m_got_on[kBuses] = {}, m_got_off[kBuses] = {};
 	IComponentHandler    *m_handler = nullptr;
 	double                m_rate = smu2000::vst3::NATIVE_RATE;
 	double                m_value[kPorts * kMidiParams] = {};
@@ -1062,7 +1073,7 @@ private:
 	float                 m_gain_now = 1.0f;
 	std::atomic<bool>     m_hush{false};
 	// 音を出したチャンネル（口ごとに 16 ビット）。止めるときに流す先を絞る
-	std::atomic<uint16>   m_sounded[kPorts] = {};
+	std::atomic<uint16>   m_sounded[kBuses] = {};
 	// 間に合っているかの記録。音声スレッドだけが触る
 	uint64                m_busy_ticks = 0, m_produced = 0, m_worst_ticks = 0, m_late = 0;
 	uint64                m_dropped = 0;       // 溜めきれずに捨てた MIDI（report で書く）
@@ -1091,14 +1102,14 @@ tresult PLUGIN_API mu_plugin::process(ProcessData &data)
 	// ホストが止めたときは、鳴らしたチャンネルだけを黙らせる。全チャンネルへ流すと
 	// 1 口につき 192 バイト＝61ms ぶんの直列になり、次に再生した最初の音がそのぶん遅れる（issue #15）
 	if (m_hush.exchange(false)) {
-		uint16 mask[kPorts];
+		uint16 mask[kBuses];
 		bool any = false;
-		for (int32 p = 0; p < kPorts; p++) {
+		for (int32 p = 0; p < kBuses; p++) {
 			mask[p] = m_sounded[p].exchange(0);
 			any = any || mask[p];
 		}
 		if (any)
-			m_engine.all_notes_off(mask, kPorts);
+			m_engine.all_notes_off(mask, kBuses);
 	}
 
 	// ---- まず、この区間に来た MIDI を全部集める
@@ -1176,7 +1187,7 @@ tresult PLUGIN_API mu_plugin::process(ProcessData &data)
 			if (events->getEvent(i, e) != kResultOk)
 				continue;
 			const int32 off = e.sampleOffset;
-			const int32 port = (e.busIndex >= 0 && e.busIndex < kPorts) ? e.busIndex : 0;
+			const int32 port = (e.busIndex >= 0 && e.busIndex < kBuses) ? e.busIndex : 0;
 			m_got_ev[port].fetch_add(1, std::memory_order_relaxed);
 			switch (e.type) {
 			case Event::kNoteOnEvent: {

@@ -55,6 +55,7 @@ inline const ui_texts &en_texts()
 		.menu_thru_b = "MIDI THRU B (sends out what B receives)",
 		.menu_open_list = "Open the list",
 		.menu_open_editor = "Open the editor",
+		.menu_plug_a_to_e = "Send MIDI IN A to port E (16-part board)",
 		.menu_native_fx = "Play effects in C++ (light; differs from hardware)",
 		.menu_native_engine = "Play without the firmware (fast; still differs)",
 		.menu_factory = "Factory reset...",

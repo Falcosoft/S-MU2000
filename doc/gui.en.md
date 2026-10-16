@@ -316,7 +316,9 @@ DIN's 31,250 bps to the unit's USB speed (10,000 bytes/s).
 
 With loopMIDI, **create one virtual cable per port** and assign each. In a
 DAW, the plug-in exposes **four MIDI input buses** (`MIDI In A (Part 1-16)`
-to `MIDI In D (Part 49-64)`), so choose the destination bus per track.
+to `MIDI In D (Part 49-64)`), so choose the destination bus per track. A
+fifth, `MIDI In E (Board)`, goes to port E, the 16-part plug-in board
+([doc/vst3.en.md](vst3.en.md)).
 
 The bottom line of the window shows the ports currently connected.
 
