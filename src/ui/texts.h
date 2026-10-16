@@ -741,6 +741,7 @@ struct ui_texts {
 	const char *kb_mod;
 	const char *kb_mod_tip;
 	const char *kb_keys_tip;
+	const char *kb_knob_tip;
 	const char *dlg_wav_desc;
 	const char *smp_not_ready;
 	const char *smp_input;

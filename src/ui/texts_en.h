@@ -654,6 +654,7 @@ inline const ui_texts &en_texts()
 		.kb_mod = "Mod",
 		.kb_mod_tip = "Modulation wheel (controller 1)\nStays where you leave it.",
 		.kb_keys_tip = "Press a key to play it; slide to move to the next key. Lower on the key is louder (unless Fixed velocity is on).\nThe PC keyboard plays it like a piano: Z X C V B N M are white keys with S D G H J as the black keys between them, and Q W E R T Y U I O P are white keys an octave higher with 2 3 5 6 7 9 0 as the black keys. The letters on the keys show which is which. PageUp / PageDown move the octave.",
+		.kb_knob_tip = "Assignable control\nPick which controller this slider moves (reverb send, chorus send, brightness and so on), then drag the slider. It sends on the port and channel chosen above. Other numbers: type one in the box next to it.",
 		.dlg_wav_desc = "WAV audio or SysEx",
 		.smp_not_ready = "Waiting for the MU2000 to start...",
 		.smp_input = "Input",

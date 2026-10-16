@@ -153,6 +153,8 @@ Open it with `Keyboard` on the bar at the top of the window (or `--keyboard-wind
   lowest key; middle C = C3)
 * **Bend and modulation**: the two strips on the left. Bend springs back to the middle; modulation (controller 1)
   stays where it is left. `Sustain` switches controller 64
+* **Two assignable controls** on the second row: pick a controller from the list (or type its number) and drag the
+  slider to send it. The defaults are the reverb send (CC91) and the chorus send (CC93)
 * **PC keyboard**: laid out like a piano. `Z X C V B N M` are white keys with `S D G H J` as the black keys
   between them (the keyboard's second octave); `Q W E R T Y U I O P` are the white keys an octave higher with
   `2 3 5 6 7 9 0` as the black keys. The letters are drawn on the keys they play. PageUp / PageDown move the octave.
