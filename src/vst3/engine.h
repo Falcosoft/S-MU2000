@@ -13,6 +13,7 @@
 
 #pragma once
 
+#include "analog_out.h"
 #include "ui/bridge.h"
 #include "ui/cpu_meter.h"
 #include "ui/driver.h"
@@ -135,8 +136,18 @@ public:
 	// MIDI を 1 メッセージ流す。実機と同じく 31250bps の直列に崩される。
 	// 起動が終わっていない間に来たものは**落さず**溜めておいて、終わってから
 	// fill() が順番どおりに流す（issue #19）
-	// port は 0 が MIDI IN A（パート 1-16）、1 が B（17-32）、2 が C（33-48）、3 が D（49-64）
+	// port は 0 が MIDI IN A（パート 1-16）、1 が B（17-32）、2 が C（33-48）、3 が D（49-64）、
+	// 4（mu2000::MIDI_PORTS）が口 E（マルチパートのプラグインボード。本体の firmware には行かない。issue #221）
 	void midi(const uint8_t *bytes, size_t n, int port = 0);
+	// 音の出口（issue #221）。false = デジタル（S/PDIF と同じ。既定）、true = アナログ（直流を切る。analog_out.h）。
+	// gui.exe の「音の出口」と同じ。どの糸から呼んでもよい。状態（save_state）に入る
+	void set_analog(bool on) { m_analog.store(on, std::memory_order_relaxed); }
+	bool analog() const { return m_analog.load(std::memory_order_relaxed); }
+	// 挿してあるボードも状態に入る（機械の状態には入らないので。issue #221）。
+	// ホストの MIDI IN A に来たものを口 E へ回す（issue #221）。VST2 と AUv2 は MIDI の入口が 1 本だけなので、
+	// マルチパートのボードを鳴らすにはこれを入れる（`F5 05` を前に付けても同じ）。状態（save_state）に入る
+	void set_a_to_e(bool on) { m_a_to_e.store(on, std::memory_order_relaxed); }
+	bool a_to_e() const { return m_a_to_e.load(std::memory_order_relaxed); }
 	// **エフェクトとして挿したとき用**（VST3・CLAP の「S-MU2000 FX」。issue #191）。A/D パートの音量は XG の
 	// 初期値が 0 なので、そのままでは入れた音が出てこない。起動し切った最初の区間で、AD1・AD2 の音量を 100、
 	// パンを左いっぱい・右いっぱいにする（ステレオの入力がステレオのまま通る）。ホストが状態を戻したら
@@ -355,8 +366,22 @@ private:
 	void tx_push(uint8_t v);
 
 	// 起動待ちや、機械を他が使っている間に来た MIDI。落さず溜めて fill が流す。
-	// 口ごとに持つ。音声スレッドしか触らない
-	std::vector<uint8_t> m_pending[mu2000::MIDI_PORTS];
+	// 口ごとに持つ（最後は口 E）。音声スレッドしか触らない
+	std::vector<uint8_t> m_pending[mu2000::MIDI_PORTS + 1];
+	// 1 バイトを口へ。口 E はボードだけが聞く。m_machine を持って呼ぶこと
+	void feed(uint8_t b, int port);
+
+	// 音の出口と、口 A から口 E への回し（上の set_analog・set_a_to_e）
+	std::atomic<bool> m_analog{false}, m_a_to_e{false};
+	smu2000::analog_out m_dc{ NATIVE_RATE };
+	bool m_analog_was = false;           // 音声の糸だけが触る
+	// 状態の後ろに付ける、プラグインの設定（save_state・load_state）。m_machine を持って呼ぶこと
+	std::vector<uint8_t> with_settings(std::vector<uint8_t> blob);
+	std::string take_settings(const uint8_t *&p, size_t &n);
+	// 挿してあるボード（差込口ごとの種類とパート、DLS と音色の組のファイル）を「名前=値」の行にする・行から挿す
+	std::string board_lines() const;
+	void apply_boards(const std::string &lines);
+	std::string m_boards_to_apply;       // 戻す状態に付いていたボード。restore が挿す（m_machine で守る）
 };
 
 } // namespace vst3

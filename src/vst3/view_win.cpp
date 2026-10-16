@@ -111,7 +111,10 @@ public:
 	void pc_frame(::xg::model &m, const ::ui::xg_snapshot &ram, ::ui::bridge &br) override;
 	void open_pc_window(int kind) override
 	{
-		open_pc(*pc_window_for_kind(kind, m_list, m_editor, m_fx, m_shapes, m_master, m_sampling));
+		if (kind == PC_BOARDS)
+			open_pc(m_boards);
+		else
+			open_pc(*pc_window_for_kind(kind, m_list, m_editor, m_fx, m_shapes, m_master, m_sampling));
 	}
 
 private:
@@ -138,6 +141,7 @@ private:
 	ui::pc_window m_shapes{ std::make_unique<ui::part_shapes>() };
 	ui::pc_window m_master{ std::make_unique<ui::master_editor>() };
 	ui::pc_window m_sampling{ std::make_unique<ui::sampling_editor>() };
+	ui::pc_window m_boards{ std::make_unique<ui::board_editor>() };     // プラグインボード（issue #221）
 };
 
 bool win_window::attach(void *parent, int w, int h)
@@ -242,10 +246,7 @@ void win_window::card_menu(int x, int y)
 {
 	// A card menu needs somewhere to send the choice, and this window is it:
 	// WM_COMMAND comes back to handle() below with the same ids
-	ui::plug_menu_state s;
-	s.card_path = m_owner.card_path();
-	s.card_ready = m_owner.card_ready();
-	HMENU m = ui::render_menu(ui::menu_plug_card(s));
+	HMENU m = ui::render_menu(ui::menu_plug_card(m_owner.menu_state()));
 	POINT pt{ x, y };
 	ClientToScreen(m_hwnd, &pt);
 	ui::track_menu(m_hwnd, pt, m);
@@ -255,7 +256,7 @@ void win_window::panel_menu(int x, int y)
 {
 	// A right click that missed the card slot: the PC windows, as on macOS.
 	// The choice comes back through WM_COMMAND, so card_command() handles it
-	HMENU m = ui::render_menu(ui::menu_plug_panel());
+	HMENU m = ui::render_menu(ui::menu_plug_panel(m_owner.menu_state()));
 	POINT pt{ x, y };
 	ClientToScreen(m_hwnd, &pt);
 	ui::track_menu(m_hwnd, pt, m);
@@ -263,6 +264,12 @@ void win_window::panel_menu(int x, int y)
 
 void win_window::card_command(UINT id)
 {
+	if (m_owner.menu_command(int(id)))          // 音の出口・口 E
+		return;
+	if (id == ui::ID_PLUG_BOARDS) {
+		open_pc(m_boards);
+		return;
+	}
 	if (id >= ui::ID_PLUG_CARD_NEW16 && id <= ui::ID_PLUG_CARD_NEW128) {
 		const std::string path = ask_card_path(m_hwnd, true);
 		if (!path.empty())
@@ -292,6 +299,7 @@ void win_window::pc_frame(::xg::model &m, const ::ui::xg_snapshot &ram, ::ui::br
 {
 	ui::pc_frame_all(m_list, m_editor, m_fx, m_shapes, m_master, m_sampling, m, ram, br,
 	                 [this](ui::pc_window &w) { open_pc(w); });
+	ui::pc_frame_boards(m_boards, m, ram, br, [this](ui::pc_window &w) { open_pc(w); });
 }
 
 // Direct3D 11 + Dear ImGui on the host's child window. Mirrors the GUI

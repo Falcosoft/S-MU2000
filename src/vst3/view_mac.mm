@@ -447,7 +447,10 @@ public:
 	void open_pc(ui::pc_window &w);
 	void open_pc_window(int kind) override
 	{
-		open_pc(*pc_window_for_kind(kind, m_list, m_editor, m_fx, m_shapes, m_master, m_sampling));
+		if (kind == PC_BOARDS)
+			open_pc(m_boards);
+		else
+			open_pc(*pc_window_for_kind(kind, m_list, m_editor, m_fx, m_shapes, m_master, m_sampling));
 	}
 
 private:
@@ -461,6 +464,7 @@ private:
 	ui::pc_window m_shapes{ std::make_unique<ui::part_shapes>() };
 	ui::pc_window m_master{ std::make_unique<ui::master_editor>() };
 	ui::pc_window m_sampling{ std::make_unique<ui::sampling_editor>() };
+	ui::pc_window m_boards{ std::make_unique<ui::board_editor>() };     // プラグインボード（issue #221）
 };
 
 // Objective-C lives at global scope (see the note on SMUPlugView above);
@@ -476,6 +480,13 @@ private:
 		return;
 	const int tag = (int)[sender tag];
 
+	if (_owner->menu_command(tag))                               // 音の出口・口 E
+		return;
+	if (tag == ui::ID_PLUG_BOARDS) {                             // プラグインボード
+		if (_win)
+			_win->open_pc_window(smu2000::vst3::PC_BOARDS);
+		return;
+	}
 	if (tag >= ui::ID_PLUG_CARD_NEW16 && tag <= ui::ID_PLUG_CARD_NEW128) {
 		NSSavePanel *panel = [NSSavePanel savePanel];
 		[panel setTitle:[NSString stringWithUTF8String:UI_TEXT(dlg_card_save, "Where to save the new SmartMedia image")]];
@@ -572,8 +583,7 @@ void mac_window::card_menu(int x, int y)
 	target->_owner = &m_owner;
 	target->_win = this;
 
-	ui::plug_menu_state s{ m_owner.card_path(), m_owner.card_ready() };
-	NSMenu *m = plug_menu(ui::menu_plug_card(s), target);
+	NSMenu *m = plug_menu(ui::menu_plug_card(m_owner.menu_state()), target);
 
 	// In the view's own coordinates. The view is flipped, which is the space the
 	// panel's hit testing already worked in
@@ -589,7 +599,7 @@ void mac_window::panel_menu(int x, int y)
 	target->_owner = &m_owner;
 	target->_win = this;
 
-	NSMenu *m = plug_menu(ui::menu_plug_panel(), target);
+	NSMenu *m = plug_menu(ui::menu_plug_panel(m_owner.menu_state()), target);
 
 	[m popUpMenuPositioningItem:nil atLocation:NSMakePoint(x, y) inView:m_view];
 }
@@ -643,6 +653,7 @@ void mac_window::detach()
 	m_shapes.hide();
 	m_master.hide();
 	m_sampling.hide();
+	m_boards.hide();
 	if (m_view) {
 		[[NSNotificationCenter defaultCenter] removeObserver:m_view];
 		[m_view stopImgui];
@@ -670,6 +681,7 @@ void mac_window::pc_frame(::xg::model &m, const ::ui::xg_snapshot &ram, ::ui::br
 {
 	ui::pc_frame_all(m_list, m_editor, m_fx, m_shapes, m_master, m_sampling, m, ram, br,
 	                 [this](ui::pc_window &w) { open_pc(w); });
+	ui::pc_frame_boards(m_boards, m, ram, br, [this](ui::pc_window &w) { open_pc(w); });
 }
 
 

@@ -101,6 +101,7 @@ struct ui_texts {
 	const char *menu_thru_b;
 	const char *menu_open_list;
 	const char *menu_open_editor;
+	const char *menu_plug_a_to_e;
 	const char *menu_native_fx;
 	const char *menu_native_engine;
 	const char *menu_factory;

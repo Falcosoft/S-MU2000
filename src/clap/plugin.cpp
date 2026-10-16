@@ -93,10 +93,12 @@ const clap_plugin_descriptor_t kDescriptor = {
 
 // MIDI IN A-D。VST3 と同じ 4 口（C・D は実機では USB だけの口で、パート 33-64 に届く）
 constexpr int kPorts = mu2000::MIDI_PORTS;
+// ノートの口は、その後ろに口 E（マルチパートのプラグインボードだけが聞く。issue #221）
+constexpr int kNotePorts = kPorts + 1;
 
 int port_of(uint16_t index)
 {
-	return index < kPorts ? int(index) : 0;
+	return index < kNotePorts ? int(index) : 0;
 }
 constexpr clap_id kGainId = 0;
 
@@ -254,21 +256,22 @@ private:
 		return true;
 	}
 
-	// ---- ノートの口。MIDI IN A-D
+	// ---- ノートの口。MIDI IN A-D と E
 
 	static const clap_plugin_note_ports_t s_note_ports;
 
 	static bool note_port(uint32_t index, bool is_input, clap_note_port_info_t *info)
 	{
-		if (!is_input || index >= kPorts || !info)
+		if (!is_input || index >= kNotePorts || !info)
 			return false;
 		std::memset(info, 0, sizeof(*info));
 		info->id = index;
 		info->supported_dialects = CLAP_NOTE_DIALECT_MIDI | CLAP_NOTE_DIALECT_CLAP;
 		info->preferred_dialect  = CLAP_NOTE_DIALECT_MIDI;
-		static const char *NAMES[4] = { "MIDI In A (Part 1-16)", "MIDI In B (Part 17-32)",
-		                                "MIDI In C (Part 33-48)", "MIDI In D (Part 49-64)" };
-		std::snprintf(info->name, sizeof(info->name), "%s", NAMES[index & 3]);
+		static const char *NAMES[kNotePorts] = { "MIDI In A (Part 1-16)", "MIDI In B (Part 17-32)",
+		                                         "MIDI In C (Part 33-48)", "MIDI In D (Part 49-64)",
+		                                         "MIDI In E (Board)" };
+		std::snprintf(info->name, sizeof(info->name), "%s", NAMES[index]);
 		return true;
 	}
 
@@ -569,11 +572,11 @@ private:
 	// **口ごとの内訳**（report_ports でログへ。issue #59）。ホストがノートを
 	// どの形（MIDI・CLAP のノート）・どの口番号で渡してくるかを数える。
 	// [形][口]。形 0 = MIDI のノートオン、1 = CLAP のノートオン、2 = MIDI（ノートオン以外）、
-	// 3 = SysEx。口 4 は範囲の外（-1 など）
-	std::atomic<uint32_t>  m_seen[4][kPorts + 1] = {};
+	// 3 = SysEx。口 4 は E、5 は範囲の外（-1 など）
+	std::atomic<uint32_t>  m_seen[4][kNotePorts + 1] = {};
 	void count_port(int kind, uint16_t index)
 	{
-		m_seen[kind][index < kPorts ? index : kPorts].fetch_add(1, std::memory_order_relaxed);
+		m_seen[kind][index < kNotePorts ? index : kNotePorts].fetch_add(1, std::memory_order_relaxed);
 	}
 	// 本スレッド（deactivate・消えるとき）から呼ぶ。何も来ていなければ書かない
 	void report_ports()
@@ -583,13 +586,13 @@ private:
 		bool any = false;
 		for (int k = 0; k < 4; k++) {
 			char buf[128];
-			uint32_t v[kPorts + 1];
-			for (int i = 0; i <= kPorts; i++) {
+			uint32_t v[kNotePorts + 1];
+			for (int i = 0; i <= kNotePorts; i++) {
 				v[i] = m_seen[k][i].exchange(0, std::memory_order_relaxed);
 				any = any || v[i];
 			}
-			std::snprintf(buf, sizeof(buf), " %s [A %u / B %u / C %u / D %u / 範囲外 %u]",
-			              KIND[k], v[0], v[1], v[2], v[3], v[4]);
+			std::snprintf(buf, sizeof(buf), " %s [A %u / B %u / C %u / D %u / E %u / 範囲外 %u]",
+			              KIND[k], v[0], v[1], v[2], v[3], v[4], v[5]);
 			line += buf;
 		}
 		if (const uint64_t dropped = m_bcast_dropped.exchange(0, std::memory_order_relaxed)) {
@@ -603,7 +606,7 @@ private:
 			m_engine.log_line(line.c_str());
 	}
 	// 音を出したチャンネル（口ごとに 16 ビット）。止めるときに流す先を絞る
-	std::atomic<uint16_t>  m_sounded[mu2000::MIDI_PORTS] = {};
+	std::atomic<uint16_t>  m_sounded[kNotePorts] = {};
 
 	// process で時刻順（同じ時刻はリセットを先）に並べ直すための入れ物
 	struct ordered { uint32_t time, rank, index; };
@@ -665,7 +668,7 @@ private:
 		return k ? k : 1;
 	}
 
-	// 4 つの口すべてに同じものが来ていたら、口 B-D のものに印を付ける（m_drop）
+	// 口 A-D の 4 つすべてに同じものが来ていたら、口 B-D（と E）のものに印を付ける（m_drop）
 	void mark_broadcast(const clap_input_events_t *ev, uint32_t count, uint32_t n)
 	{
 		m_drop.assign(count, 0);
@@ -676,7 +679,7 @@ private:
 				continue;
 			int port = -1;
 			const uint64_t k = event_key(h, std::min(h->time, n), port);
-			if (k && port >= 0 && port < kPorts)
+			if (k && port >= 0 && port < kNotePorts)
 				m_bcast.push_back({ k, i, uint8_t(port) });
 		}
 		if (m_bcast.size() < size_t(kPorts))
@@ -689,7 +692,7 @@ private:
 			unsigned mask = 0;
 			while (e < m_bcast.size() && m_bcast[e].key == m_bcast[g].key)
 				mask |= 1u << m_bcast[e++].port;
-			if (mask == (1u << kPorts) - 1) {
+			if ((mask & ((1u << kPorts) - 1)) == (1u << kPorts) - 1) {
 				for (size_t j = g; j < e; j++)
 					if (m_bcast[j].port != 0) {
 						m_drop[m_bcast[j].index] = 1;
@@ -724,7 +727,7 @@ const clap_plugin_audio_ports_t mu_plugin::s_audio_ports = {
 };
 
 const clap_plugin_note_ports_t mu_plugin::s_note_ports = {
-	[](const clap_plugin_t *, bool is_input) -> uint32_t { return is_input ? kPorts : 0; },
+	[](const clap_plugin_t *, bool is_input) -> uint32_t { return is_input ? kNotePorts : 0; },
 	[](const clap_plugin_t *, uint32_t index, bool is_input, clap_note_port_info_t *info) {
 		return note_port(index, is_input, info);
 	},
@@ -904,14 +907,14 @@ clap_process_status mu_plugin::process(const clap_process_t *pr)
 	// 止められたときは、鳴らしたチャンネルだけを黙らせる。全チャンネルへ流すと
 	// 1 口につき 192 バイト＝61ms ぶんの直列になり、次の最初の音がそのぶん遅れる（issue #15）
 	if (m_hush.exchange(false)) {
-		uint16_t mask[mu2000::MIDI_PORTS];
+		uint16_t mask[kNotePorts];
 		bool any = false;
-		for (int p = 0; p < mu2000::MIDI_PORTS; p++) {
+		for (int p = 0; p < kNotePorts; p++) {
 			mask[p] = m_sounded[p].exchange(0);
 			any = any || mask[p];
 		}
 		if (any)
-			m_engine.all_notes_off(mask, mu2000::MIDI_PORTS);
+			m_engine.all_notes_off(mask, kNotePorts);
 	}
 
 	// 最初の区間（と状態を戻した直後）の頭で、RAM から「音源の今の値」を

@@ -31,6 +31,7 @@
 	"menu_thru_b": "MIDI THRU B（B で受けたものを外へ）",
 	"menu_open_list": "一覧を開く",
 	"menu_open_editor": "エディタを開く",
+	"menu_plug_a_to_e": "MIDI IN A に来たものを口 E（16 パートのボード）へ回す",
 	"menu_native_fx": "エフェクトを C++ で鳴らす（軽い・音は実機と違う）",
 	"menu_native_engine": "firmware を走らせずに鳴らす（速い・まだ音が違う）",
 	"menu_factory": "工場出荷状態に戻す...",

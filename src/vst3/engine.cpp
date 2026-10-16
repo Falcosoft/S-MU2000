@@ -10,6 +10,10 @@
 #include "ui/xg_state.h"
 #include "xg/native_driver.h"
 #include "ui/xg_ui.h"
+#include "ui/fc_banks.h"
+#include "ui/fm_banks.h"
+#include "ui/harm_banks.h"
+#include "ui/user_boards.h"
 
 #include "compat/paths.h"
 #include "compat/platform.h"
@@ -567,16 +571,35 @@ void engine::one_sample(float &l, float &r)
 		m_mu->set_audio_input(0, 0);
 	}
 	m_mu->run_sample(li, ri);
+	// アナログの出口: 直流を切るのは音量より前（DAC のすぐ後ろ）。gui.exe の ui/engine.h と同じ
+	const bool to_analog = m_analog.load(std::memory_order_relaxed);
+	if (to_analog && !m_analog_was)
+		m_dc.reset();
+	m_analog_was = to_analog;
+	if (to_analog) {
+		li = s32(std::lrint(m_dc.run(0, li)));
+		ri = s32(std::lrint(m_dc.run(1, ri)));
+	}
 	const float k = 1.0f / float(mu2000::DAC_FULL_SCALE);
 	l = std::clamp(float(li) * k, -1.0f, 1.0f);
 	r = std::clamp(float(ri) * k, -1.0f, 1.0f);
 }
 
 
+void engine::feed(uint8_t b, int port)
+{
+	if (port == mu2000::MIDI_PORTS)
+		m_mu->board_midi_in(b);
+	else
+		m_drv.watch(b, m_mu->midi_in(b, port));
+}
+
 void engine::midi(const uint8_t *bytes, size_t n, int port)
 {
-	if (port < 0 || port >= mu2000::MIDI_PORTS)
+	if (port < 0 || port > mu2000::MIDI_PORTS)
 		port = 0;
+	if (port == 0 && m_a_to_e.load(std::memory_order_relaxed))
+		port = mu2000::MIDI_PORTS;
 	const status s = state();
 	if (s == status::failed)
 		return;
@@ -591,10 +614,10 @@ void engine::midi(const uint8_t *bytes, size_t n, int port)
 			apply_deferred_state();
 			// 溜まっていた分を先に流して、順番を保つ
 			for (uint8_t b : m_pending[port])
-				m_drv.watch(b, m_mu->midi_in(b, port));
+				feed(b, port);
 			m_pending[port].clear();
 			for (size_t i = 0; i < n; i++)
-				m_drv.watch(bytes[i], m_mu->midi_in(bytes[i], port));
+				feed(bytes[i], port);
 			return;
 		}
 	}
@@ -608,7 +631,7 @@ void engine::midi(const uint8_t *bytes, size_t n, int port)
 
 void engine::all_notes_off(const uint16_t *mask, int ports)
 {
-	for (int port = 0; port < ports && port < mu2000::MIDI_PORTS; port++)
+	for (int port = 0; port < ports && port <= mu2000::MIDI_PORTS; port++)
 		for (int ch = 0; ch < 16; ch++) {
 			if (!((mask[port] >> ch) & 1))
 				continue;
@@ -721,9 +744,9 @@ void engine::fill(float *left, float *right, int n, const float *in_l, const flo
 	m_drv.pump_wheel(*m_mu, m_bridge);
 
 	// 起動を待つ間に溜めた分。口 C・D も（前は A・B しか流さず、C・D はその口に次の MIDI が来るまで残っていた）
-	for (int port = 0; port < mu2000::MIDI_PORTS; port++) {
+	for (int port = 0; port <= mu2000::MIDI_PORTS; port++) {
 		for (uint8_t b : m_pending[port])
-			m_drv.watch(b, m_mu->midi_in(b, port));
+			feed(b, port);
 		m_pending[port].clear();
 	}
 
@@ -836,6 +859,11 @@ void engine::silence_restored()
 
 bool engine::restore(const uint8_t *p, size_t n, const std::vector<uint8_t> &setup)
 {
+	// ボードを先に挿す（状態の firmware はボードを見つけたあと。apply_boards）
+	if (!m_boards_to_apply.empty()) {
+		apply_boards(m_boards_to_apply);
+		m_boards_to_apply.clear();
+	}
 	std::string err = "機械まるごとの状態が入っていない";
 	if (p && n && m_mu->load_state(p, n, err)) {
 		silence_restored();
@@ -878,10 +906,160 @@ std::vector<uint8_t> engine::save_state()
 	std::lock_guard<std::mutex> lock(m_machine);
 	if (state() != status::ready || !m_mu) {
 		// 起動が終わる前に保存されたら、戻す予定だった状態をそのまま返す
-		return m_deferred_state;
+		return with_settings(m_deferred_state);
 	}
 	apply_deferred_state();
-	return m_mu->save_state();
+	return with_settings(m_mu->save_state());
+}
+
+// プラグインの設定（音の出口・口 A から E への回し・挿してあるボード。issue #221）は、機械の状態の**後ろ**に付ける。
+// 機械の状態は読み終えた後ろを見ないので、前の版でもこのまま読める（付いたものは無視される）。
+// 並び: 「名前=値」の行（UTF-8）、その長さ 4 バイト、印 8 バイト。知らない名前は読み飛ばす
+static const uint8_t SETTINGS_MARK[8] = { 'S', 'M', 'U', 'p', 'l', 'u', 'g', '2' };
+
+std::string engine::board_lines() const
+{
+	std::string out;
+	if (!m_mu)
+		return out;
+	for (int slot = 0; slot < mu2000::PLG_SLOTS; slot++)
+		if (const int kind = m_mu->virtual_board_kind(slot))
+			out += "board" + std::to_string(slot) + "=" + std::to_string(kind) + "," + std::to_string(m_mu->virtual_board_part(slot)) + "\n";
+	auto path = [&out](const char *key, const std::string &v) {
+		if (!v.empty())
+			out += std::string(key) + "=" + v + "\n";
+	};
+	path("dls", m_mu->board_dls_path());
+	path("user", m_mu->user_board_path());
+	path("fm", m_mu->fm_bank_path());
+	path("harm", m_mu->harm_bank_path());
+	for (int t = 0; t < mu2000::FC_BANKS; t++)
+		path(("fc" + std::to_string(t)).c_str(), m_mu->fc_bank_path(t));
+	return out;
+}
+
+// 行のとおりに挿す。ここに無い差込口は外す。m_machine を持って、機械の状態を戻す**前**に呼ぶ
+// （保存した状態の firmware はボードを見つけたあとなので、起動し直さなくてもそのまま話せる）
+void engine::apply_boards(const std::string &lines)
+{
+	int kind[mu2000::PLG_SLOTS] = {}, part[mu2000::PLG_SLOTS] = {};
+	std::string dls, user, fm, harm, fc[mu2000::FC_BANKS];
+	for (size_t at = 0; at < lines.size();) {
+		size_t end = lines.find('\n', at);
+		if (end == std::string::npos)
+			end = lines.size();
+		const std::string line = lines.substr(at, end - at);
+		at = end + 1;
+		const size_t eq = line.find('=');
+		if (eq == std::string::npos)
+			continue;
+		const std::string key = line.substr(0, eq), v = line.substr(eq + 1);
+		if (key.size() == 6 && key.compare(0, 5, "board") == 0 && key[5] >= '0' && key[5] < char('0' + mu2000::PLG_SLOTS)) {
+			const int slot = key[5] - '0';
+			kind[slot] = std::atoi(v.c_str());
+			const size_t comma = v.find(',');
+			part[slot] = comma == std::string::npos ? slot : std::atoi(v.c_str() + comma + 1);
+		} else if (key == "dls") {
+			dls = v;
+		} else if (key == "user") {
+			user = v;
+		} else if (key == "fm") {
+			fm = v;
+		} else if (key == "harm") {
+			harm = v;
+		} else if (key.size() == 3 && key.compare(0, 2, "fc") == 0 && key[2] >= '0' && key[2] < char('0' + mu2000::FC_BANKS)) {
+			fc[key[2] - '0'] = v;
+		}
+	}
+	std::string err;
+	auto warn = [this](const char *what, const std::string &path, const std::string &why) {
+		log_line((std::string(what) + ": " + why + "（" + path + "）").c_str());
+	};
+	if (!dls.empty() && dls != m_mu->board_dls_path() && !m_mu->load_board_dls(dls, err))
+		warn("DLS のボード", dls, err);
+	if (!user.empty() && user != m_mu->user_board_path()) {
+		if (const auto bd = ui::user_boards::adopt(user, err))
+			m_mu->set_user_board(bd, user);
+		else
+			warn("ボードのファイル", user, err);
+	}
+	if (!fm.empty() && fm != m_mu->fm_bank_path()) {
+		if (const auto bk = ui::fm_banks::adopt(fm, err))
+			m_mu->set_fm_bank(bk, fm);
+		else
+			warn("FM ボードの音色の組", fm, err);
+	}
+	if (!harm.empty() && harm != m_mu->harm_bank_path()) {
+		if (const auto bk = ui::harm_banks::adopt(harm, err))
+			m_mu->set_harm_bank(bk, harm);
+		else
+			warn("ハーモニックボードの音色の組", harm, err);
+	}
+	for (int t = 0; t < mu2000::FC_BANKS; t++)
+		if (!fc[t].empty() && fc[t] != m_mu->fc_bank_path(t)) {
+			if (const auto bk = ui::fc_banks::adopt(t, fc[t], err))
+				m_mu->set_fc_bank(bk, fc[t], t);
+			else
+				warn("FC ボードの音色の組", fc[t], err);
+		}
+	// 外すのを先に（マルチパートのボードは 1 枚だけなので、別の差込口へ動かしたときに新しい方を外さない）
+	for (int slot = 0; slot < mu2000::PLG_SLOTS; slot++)
+		if (!kind[slot] && m_mu->virtual_board_kind(slot))
+			m_mu->set_virtual_board(mu2000::VBOARD_NONE, 0, slot);
+	int n = 0;
+	for (int slot = 0; slot < mu2000::PLG_SLOTS; slot++)
+		if (kind[slot]) {
+			if (m_mu->virtual_board_kind(slot) != kind[slot] || m_mu->virtual_board_part(slot) != part[slot])
+				m_mu->set_virtual_board(kind[slot], part[slot], slot);
+			n++;
+		}
+	if (n)
+		logf("状態に付いていたボード %d 枚を挿した", n);
+}
+
+std::vector<uint8_t> engine::with_settings(std::vector<uint8_t> blob)
+{
+	if (blob.empty())
+		return blob;
+	std::string text = std::string("analog=") + (analog() ? "1" : "0") + "\na_to_e=" + (a_to_e() ? "1" : "0") + "\n";
+	// 起動の前（戻す予定の状態を返すとき）は、戻す予定のボードをそのまま
+	text += state() == status::ready && m_mu ? board_lines() : m_boards_to_apply;
+	const uint32_t len = uint32_t(text.size());
+	blob.insert(blob.end(), text.begin(), text.end());
+	for (int i = 0; i < 4; i++) blob.push_back(uint8_t(len >> (8 * i)));
+	blob.insert(blob.end(), SETTINGS_MARK, SETTINGS_MARK + 8);
+	return blob;
+}
+
+// 後ろに付いた設定を取り外す。音の出口と口 E はここで決め、ボードの行は返す（挿すのは restore）
+std::string engine::take_settings(const uint8_t *&p, size_t &n)
+{
+	if (!p || n < 12 || std::memcmp(p + n - 8, SETTINGS_MARK, 8) != 0)
+		return std::string();
+	uint32_t len = 0;
+	for (int i = 0; i < 4; i++) len |= uint32_t(p[n - 12 + i]) << (8 * i);
+	if (len > n - 12)
+		return std::string();
+	const std::string text(reinterpret_cast<const char *>(p + n - 12 - len), len);
+	n -= 12 + len;
+	if (!n)
+		p = nullptr;
+	std::string boards;
+	for (size_t at = 0; at < text.size();) {
+		size_t end = text.find('\n', at);
+		if (end == std::string::npos)
+			end = text.size();
+		const std::string line = text.substr(at, end - at);
+		at = end + 1;
+		if (line == "analog=1" || line == "analog=0")
+			set_analog(line.back() == '1');
+		else if (line == "a_to_e=1" || line == "a_to_e=0")
+			set_a_to_e(line.back() == '1');
+		else if (!line.empty())
+			boards += line + "\n";
+	}
+	// ボードの行が 1 つも無くても「ボード無し」として外させる（空のままだと前のボードが残る）
+	return boards.empty() ? std::string("none\n") : boards;
 }
 
 std::vector<uint8_t> engine::save_xg_setup()
@@ -900,6 +1078,10 @@ bool engine::load_state(const uint8_t *p, size_t n, const uint8_t *setup, size_t
 {
 	if ((!p || !n) && (!setup || !setup_n))
 		return false;
+	// 後ろに付いたプラグインの設定を先に取り外す（with_settings）。load_state=0 でも出口の設定は戻す
+	const std::string boards = take_settings(p, n);
+	if ((!p || !n) && (!setup || !setup_n))
+		return false;
 	// **plugin.ini の load_state=0** なら、ホストが戻してきた状態を使わない（issue #51）。
 	// 受け取ったことにして捨てる（断るとホストによっては何度も戻そうとする）
 	if (!load_state_allowed()) {
@@ -916,6 +1098,7 @@ bool engine::load_state(const uint8_t *p, size_t n, const uint8_t *setup, size_t
 		return false;
 	const std::vector<uint8_t> fallback = setup && setup_n ? std::vector<uint8_t>(setup, setup + setup_n)
 	                                                       : std::vector<uint8_t>();
+	m_boards_to_apply = boards;
 	if (state() != status::ready || !m_mu) {
 		m_deferred_state.assign(p, p + (p ? n : 0));
 		m_deferred_setup = fallback;

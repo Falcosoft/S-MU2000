@@ -62,6 +62,19 @@ inline void pc_frame_all(Window &list, Window &editor, Window &fx, Window &shape
 	ImGui::SetCurrentContext(panel_ctx);
 }
 
+// The plug-in boards window, which the plug-ins drive next to the six above
+// (gui.exe drives its own in ui/app.h). The master window's button asks for
+// it through xgui::request_board_window. Same context rule as pc_frame_all
+template <typename Window, typename Open>
+inline void pc_frame_boards(Window &boards, xg::model &m, const xg_snapshot &ram, bridge &br, Open open)
+{
+	ImGuiContext *const panel_ctx = ImGui::GetCurrentContext();
+	boards.frame(m, ram, br);
+	if (xgui::take_board_window_request())
+		open(boards);
+	ImGui::SetCurrentContext(panel_ctx);
+}
+
 // What a front end owes its windows on the way out (the overview unmutes,
 // the editor releases held buttons, and so on)
 template <typename Window>

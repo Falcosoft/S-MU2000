@@ -67,6 +67,7 @@ enum pc_kind {
 	PC_SHAPES,        // パートの音色
 	PC_MASTER,        // マスター
 	PC_SAMPLING,      // サンプリング
+	PC_BOARDS = 7,    // プラグインボード（ui::BAR_BOARD と同じ番号。issue #221）
 };
 
 
