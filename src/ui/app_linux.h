@@ -76,6 +76,10 @@ public:
 		};
 		return sdl_popup::open_file(win, quit, f, 2, "");
 	}
+	std::string ask_card_folder_path() override
+	{
+		return sdl_popup::open_folder(win, quit);
+	}
 	std::string ask_card_save_path() override
 	{
 		static const sdl_popup::file_filter f[] = {

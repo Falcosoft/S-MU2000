@@ -107,6 +107,7 @@ struct ui_texts {
 	const char *menu_restart;
 	const char *menu_card_new;
 	const char *menu_card_open;
+	const char *menu_card_folder;
 	const char *menu_card_eject;
 	const char *menu_card_eject_fmt;  // %s: the file in the slot
 	const char *menu_play_file;
@@ -146,6 +147,8 @@ struct ui_texts {
 	// serves every backend; the identical console twins in app.h share
 	// these fields rather than duplicating them.
 	const char *dlg_card_open;
+	const char *dlg_card_folder;
+	const char *dlg_card_folder_skipped;
 	const char *dlg_card_save;
 	const char *dlg_midi_open;
 	const char *dlg_sysex_desc;

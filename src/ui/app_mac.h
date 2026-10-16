@@ -63,6 +63,10 @@ public:
 	{
 		return open_file_panel(UI_TEXT(dlg_card_open, "Insert a SmartMedia image"), "img");
 	}
+	std::string ask_card_folder_path() override
+	{
+		return pick_folder_panel(UI_TEXT(dlg_card_folder, "Folder to use as the SmartMedia"));
+	}
 	std::string ask_card_save_path() override
 	{
 		return save_file_panel(UI_TEXT(dlg_card_save, "Where to save the new SmartMedia image"), "smartmedia.img", "img");

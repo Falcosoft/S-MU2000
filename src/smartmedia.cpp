@@ -7,6 +7,7 @@
 #include <algorithm>
 #include <cstdio>
 #include <ctime>
+#include <functional>
 
 #ifdef _WIN32
 #ifndef NOMINMAX
@@ -182,12 +183,57 @@ bool smartmedia::format(const std::vector<root_file> &files)
 	// 書くブロックは全部のページを 0 で埋める
 	const u32 root_at = f->hidden + 1 + 2 * u32(f->fat_sectors);
 	const u32 data_at = root_at + 16;
+	// 名前に「/」があれば、下のディレクトリ（「DIR/NAME.EXT」）。ディレクトリは 1 クラスタ（512 項目のうち
+	// 「.」「..」を除く 510）に収まるものだけ。ルートは 256 項目
+	struct node {
+		std::string name;
+		const root_file *file = nullptr;     // nullptr ならディレクトリ
+		std::vector<node> kids;
+	};
+	node root;
+	for (const root_file &rf : files) {
+		node *at = &root;
+		size_t from = 0;
+		for (;;) {
+			const size_t slash = rf.name.find('/', from);
+			const std::string part = rf.name.substr(from, slash == std::string::npos ? std::string::npos : slash - from);
+			if (part.empty())
+				return false;
+			node *found = nullptr;
+			for (node &k : at->kids)
+				if (k.name == part)
+					found = &k;
+			if (slash == std::string::npos) {
+				if (found)
+					return false;              // 同じ名前が 2 つ
+				at->kids.push_back(node{ part, &rf, {} });
+				break;
+			}
+			if (!found) {
+				at->kids.push_back(node{ part, nullptr, {} });
+				found = &at->kids.back();
+			} else if (found->file) {
+				return false;                  // ファイルと同じ名前のディレクトリ
+			}
+			at = found;
+			from = slash + 1;
+		}
+	}
 	u32 clusters = 0;
-	if (files.size() > 256)
-		return false;
-	for (const root_file &rf : files)
-		clusters += u32((rf.bytes.size() + CLUSTER - 1) / CLUSTER);
-	if (clusters > data_clusters(*f))
+	bool fits = root.kids.size() <= 256;
+	const std::function<void(const node &)> count = [&](const node &n) {
+		for (const node &k : n.kids) {
+			if (k.file) {
+				clusters += u32((k.file->bytes.size() + CLUSTER - 1) / CLUSTER);
+			} else {
+				clusters += 1;
+				fits &= k.kids.size() <= CLUSTER / 32 - 2;
+				count(k);
+			}
+		}
+	};
+	count(root);
+	if (!fits || clusters > data_clusters(*f))
 		return false;
 	const u32 used = data_at + clusters * 32;
 	const u32 blocks = (used + PAGES_PER_BLOCK - 1) / PAGES_PER_BLOCK;
@@ -257,22 +303,47 @@ bool smartmedia::format(const std::vector<root_file> &files)
 		};
 		const u32 end_mark = f->fat16 ? 0xffff : 0xfff;
 		u32 next = 2;
-		for (size_t i = 0; i < files.size(); i++) {
-			const root_file &rf = files[i];
-			u8 *de = sec.data() + size_t(root_at) * PAGE + i * 32;
-			if (!dir_name(rf.name, de))
-				return false;
-			de[11] = 0x20;                // 書庫の印
+		const auto cluster_ptr = [&](u32 cl) { return sec.data() + size_t(data_at + (cl - 2) * 32) * PAGE; };
+		const auto entry = [&](u8 *de, const u8 name11[11], u8 attr, u32 start, u32 size) {
+			std::copy(name11, name11 + 11, de);
+			de[11] = attr;
 			put16(de + 22, dos_time);
 			put16(de + 24, dos_date);
-			const u32 n = u32((rf.bytes.size() + CLUSTER - 1) / CLUSTER);
-			put16(de + 26, n ? next : 0);
-			put32(de + 28, u32(rf.bytes.size()));
-			for (u32 k = 0; k < n; k++)
-				set_fat(next + k, k + 1 < n ? next + k + 1 : end_mark);
-			std::copy(rf.bytes.begin(), rf.bytes.end(), sec.begin() + std::ptrdiff_t(size_t(data_at + (next - 2) * 32) * PAGE));
-			next += n;
-		}
+			put16(de + 26, start);
+			put32(de + 28, size);
+		};
+		// ディレクトリ n の項目を dir（項目の並びの頭）に書く。self は n のクラスタ（ルートは 0。下の「..」が指す先）
+		std::function<bool(const node &, u8 *, u32)> place = [&](const node &n, u8 *dir, u32 self) -> bool {
+			for (size_t i = 0; i < n.kids.size(); i++) {
+				const node &k = n.kids[i];
+				u8 name11[11];
+				if (!dir_name(k.name, name11))
+					return false;
+				u8 *de = dir + i * 32;
+				if (k.file) {
+					const u32 cnt = u32((k.file->bytes.size() + CLUSTER - 1) / CLUSTER);
+					entry(de, name11, 0x20, cnt ? next : 0, u32(k.file->bytes.size()));     // 0x20 = 書庫の印
+					for (u32 c = 0; c < cnt; c++)
+						set_fat(next + c, c + 1 < cnt ? next + c + 1 : end_mark);
+					std::copy(k.file->bytes.begin(), k.file->bytes.end(), cluster_ptr(next));
+					next += cnt;
+				} else {
+					const u32 me = next++;
+					entry(de, name11, 0x10, me, 0);                                      // 0x10 = ディレクトリ
+					set_fat(me, end_mark);
+					u8 *body = cluster_ptr(me);
+					static const u8 DOT[11] = { '.', ' ', ' ', ' ', ' ', ' ', ' ', ' ', ' ', ' ', ' ' };
+					static const u8 DOTDOT[11] = { '.', '.', ' ', ' ', ' ', ' ', ' ', ' ', ' ', ' ', ' ' };
+					entry(body, DOT, 0x10, me, 0);
+					entry(body + 32, DOTDOT, 0x10, self, 0);
+					if (!place(k, body + 64, me))
+						return false;
+				}
+			}
+			return true;
+		};
+		if (!place(root, sec.data() + size_t(root_at) * PAGE, 0))
+			return false;
 	}
 	// 物理のページへ。予備の領域はブロックの番地（0001 0bbb bbbb bbbp、p で 1 の数を偶数に）と ECC
 	for (u32 lb = 0; lb < blocks; lb++) {

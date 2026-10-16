@@ -37,6 +37,7 @@
 	"menu_restart": "MU を起動し直す（電源の入れ直し）",
 	"menu_card_new": "新しい SmartMedia を作って差す",
 	"menu_card_open": "SmartMedia を差す...",
+	"menu_card_folder": "フォルダーを SmartMedia として使う...",
 	"menu_card_eject": "SmartMedia を抜く",
 
 	// %s: the file in the slot
@@ -59,6 +60,8 @@
 	// serves every backend; the identical console twins in app.h share
 	// these fields rather than duplicating them.
 	"dlg_card_open": "差す SmartMedia",
+	"dlg_card_folder": "SmartMedia として使うフォルダー",
+	"dlg_card_folder_skipped": "次のファイルはカードに入れませんでした。名前がカードの決まり（8.3: 8 文字まで、点、3 文字まで。空白は不可）に収まりません。",
 	"dlg_card_save": "新しい SmartMedia の保存先",
 	"dlg_midi_open": "流す MIDI ファイル",
 	"dlg_sysex_desc": "SysEx",

@@ -55,6 +55,9 @@ struct file_filter {
 	const char *pattern;   // e.g. "mid;midi"
 };
 
+// Picks a folder. "" when cancelled
+std::string open_folder(SDL_Window *win, std::atomic<bool> &quit);
+
 std::string open_file(SDL_Window *win, std::atomic<bool> &quit,
                       const file_filter *filters, int nfilters,
                       const std::string &defloc);

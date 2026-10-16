@@ -139,6 +139,7 @@ public:
 	void menu_note(const std::string &) override {}
 	std::string ask_card_open_path() override { return std::string(); }
 	std::string ask_card_save_path() override { return std::string(); }
+	std::string ask_card_folder_path() override { return std::string(); }
 	// By name, the way app_mac.h asks window_mac.h for its open panel: the
 	// window system owns the dialog. The empty return is honest rather than
 	// lazy - a document picker answers later, so the path cannot come back from

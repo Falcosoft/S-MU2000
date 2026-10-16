@@ -18,6 +18,7 @@
 
 #include <windows.h>
 #include <commdlg.h>
+#include <shlobj.h>
 
 #include "menu.h"
 #include "menu_win.h"
@@ -83,6 +84,21 @@ inline std::string win_save_file(HWND hwnd, const wchar_t *title,
 	if (!GetSaveFileNameW(&o))
 		return {};
 	return to_utf8(file);
+}
+
+// Picks a folder. "" when cancelled
+inline std::string win_pick_folder(HWND hwnd, const wchar_t *title)
+{
+	BROWSEINFOW bi{};
+	bi.hwndOwner = hwnd;
+	bi.lpszTitle = title;
+	bi.ulFlags = BIF_RETURNONLYFSDIRS | BIF_NEWDIALOGSTYLE;
+	PIDLIST_ABSOLUTE id = SHBrowseForFolderW(&bi);
+	wchar_t path[MAX_PATH * 4] = {};
+	const bool got = id && SHGetPathFromIDListW(id, path);
+	if (id)
+		CoTaskMemFree(id);
+	return got ? to_utf8(path) : std::string();
 }
 
 // Asks a yes/no question. True only when accepted; Cancel is the default,

@@ -314,6 +314,7 @@ SRCS := \
 	src/sampling.cpp \
 	src/smartmedia.cpp \
 	src/card_fs.cpp \
+	src/card_folder.cpp \
 	src/m2a.cpp \
 	src/mame/sound/swp30.cpp \
 	src/mame/sound/swp30_jit.cpp \
