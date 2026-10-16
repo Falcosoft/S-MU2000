@@ -317,7 +317,8 @@ void mu2000::set_threaded(bool on)
 // 頼まれていて、台数が境を超えていなければ別スレッドにする。そうでなければ 1 本に戻す
 void mu2000::apply_threading()
 {
-	const bool on = m_want_threaded && g_live_instances.load(std::memory_order_relaxed) <= threaded_max();
+	const bool on = m_want_threaded && !m_slave_retry &&
+		g_live_instances.load(std::memory_order_relaxed) <= threaded_max();
 	if (on == m_slave_thread.joinable())
 		return;
 
@@ -332,6 +333,7 @@ void mu2000::apply_threading()
 	// 合図の数は前に回した分だけ進んでいるので、今の数から待ち始める（0 からだと着いた途端に 1 サンプル余計に回す）
 	const u64 seen = m_slave_go.load(std::memory_order_acquire);
 	m_slave_done.store(seen, std::memory_order_release);
+	m_slave_started.store(seen, std::memory_order_release);
 	m_slave_thread = std::thread([this, seen] { slave_loop(seen); });
 }
 
@@ -339,6 +341,14 @@ void mu2000::apply_threading()
 #ifndef SLAVE_SPINS
 #define SLAVE_SPINS 20000
 #endif
+
+// The audio thread must never spin indefinitely while waiting for the slave:
+// an RT-priority host may be restricted to the same CPU as the lower-priority
+// slave, preventing the slave from running until the audio thread blocks.
+// The bounded spin retains the cheap parallel hand-off on multiple CPUs.
+static constexpr int SLAVE_SYNC_SPINS = 8192;
+static constexpr u32 SLAVE_STARVE_LIMIT = 4;
+static constexpr u32 SLAVE_RETRY_SAMPLES = 44100; // 1 s at the native rate
 
 void mu2000::slave_loop(u64 seen)
 {
@@ -368,9 +378,11 @@ void mu2000::slave_loop(u64 seen)
 		if (m_slave_quit.load(std::memory_order_relaxed))
 			return;
 
+		m_slave_started.store(seen, std::memory_order_release);
 		m_slave_l = m_slave_r = 0;
 		m_swps.run_sample(m_slave_l, m_slave_r);
 		m_slave_done.store(seen, std::memory_order_release);
+		m_slave_done.notify_one();
 	}
 }
 
@@ -4057,9 +4069,18 @@ void mu2000::run_sample(s32 &left, s32 &right)
 		}
 	}
 
-	// 台数が変わっていたら別スレッドの使い方を見直す（8192 サンプルごと）
-	if (m_want_threaded && !(++m_thread_check & 0x1fff))
-		apply_threading();
+	// Reevaluate the number of active instances every 8192 samples as before.
+	// After repeated unscheduled hand-offs, run sequentially for one second,
+	// then probe parallelism again. No platform-specific affinity API needed.
+	if (m_want_threaded) {
+		if (m_slave_retry) {
+			if (m_slave_thread.joinable())
+				apply_threading(); // retire the worker before starting this sample
+			if (--m_slave_retry == 0)
+				apply_threading();
+		} else if (!(++m_thread_check & 0x1fff))
+			apply_threading();
+	}
 
 	m_sample_count++;
 
@@ -4286,8 +4307,25 @@ void mu2000::run_sample(s32 &left, s32 &right)
 		m_slave_go.store(tag, std::memory_order_release);
 		m_slave_go.notify_one();   // 眠っていたら起こす。起きていれば素通り
 		m_swpm.run_sample(lm, rm);
-		while (m_slave_done.load(std::memory_order_acquire) != tag)
+		int spins = 0;
+		while (m_slave_done.load(std::memory_order_acquire) != tag &&
+		       ++spins < SLAVE_SYNC_SPINS)
 			smu2000::cpu_pause();
+		if (m_slave_done.load(std::memory_order_acquire) != tag) {
+			// Sleeping releases the CPU even if the host's audio thread has
+			// higher priority. The worker notifies when its sample is ready.
+			// Only a *late start* (as opposed to slow DSP) counts as a
+			// scheduling stall and can trigger a temporary serial fallback.
+			const bool late = m_slave_started.load(std::memory_order_acquire) != tag;
+			while (m_slave_done.load(std::memory_order_acquire) != tag)
+				m_slave_done.wait(tag - 1, std::memory_order_acquire);
+			if (late && ++m_slave_late_starts >= SLAVE_STARVE_LIMIT) {
+				m_slave_retry = SLAVE_RETRY_SAMPLES;
+				m_slave_late_starts = 0;
+			} else if (!late)
+				m_slave_late_starts = 0;
+		} else
+			m_slave_late_starts = 0;
 		ls = m_slave_l;
 		rs = m_slave_r;
 	} else {
