@@ -484,7 +484,7 @@ private:
 		return;
 	if (tag == ui::ID_PLUG_BOARDS) {                             // プラグインボード
 		if (_win)
-			_win->open_pc_window(PC_BOARDS);
+			_win->open_pc_window(smu2000::vst3::PC_BOARDS);
 		return;
 	}
 	if (tag >= ui::ID_PLUG_CARD_NEW16 && tag <= ui::ID_PLUG_CARD_NEW128) {
