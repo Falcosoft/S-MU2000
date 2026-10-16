@@ -87,6 +87,10 @@ public:
 		                                       UI_TEXT(dlg_all_files, "All files"), "*.*");
 		return win_open_file(hwnd, title.c_str(), filter.c_str(), L"img");
 	}
+	std::string ask_card_folder_path() override
+	{
+		return win_pick_folder(hwnd, to_wide(UI_TEXT(dlg_card_folder, "Folder to use as the SmartMedia")).c_str());
+	}
 	std::string ask_card_save_path() override
 	{
 		const std::wstring title = to_wide(UI_TEXT(dlg_card_save, "Where to save the new SmartMedia image"));

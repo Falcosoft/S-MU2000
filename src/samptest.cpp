@@ -15,12 +15,15 @@
 #include "ui/driver.h"
 #include "wav_in.h"
 #include "card_fs.h"
+#include "card_folder.h"
 #include "m2a.h"
 #include "wavegen.h"
 #include "ui/panel_macro.h"
 #include "xg/wave_catalog.h"
 
 #include <chrono>
+#include <ctime>
+#include <iterator>
 #include <filesystem>
 #include <fstream>
 #include <cmath>
@@ -415,6 +418,116 @@ int main(int argc, char **argv)
 	h.mu.card_swapped();
 	h.pump(1000);
 	load_by_macro("FROMPC.M2A", "差し替えたカードから LOAD");
+	// フォルダーをカードとして差す（card_folder.h、issue #218）。PC のフォルダーに、8.3 に収まるファイル・下のフォルダーの
+	// ファイル・収まらない名前のファイルを置く → カードにして差し、firmware の SAVE で ALL+SEQ を書かせる → フォルダーへ
+	// 書き戻すと ALL_SEQ.M2A が出てきて、前からあったファイルはそのまま。収まらない名前のファイルは入れずに知らせる
+	{
+		namespace fs = std::filesystem;
+		const fs::path dir = fs::temp_directory_path() / ("smu-cardfolder-" + std::to_string(std::time(nullptr)));
+		std::error_code ec;
+		fs::create_directories(dir / "Songs", ec);
+		const auto put_file = [](const fs::path &p, const std::string &text) {
+			std::ofstream f(p, std::ios::binary);
+			f << text;
+		};
+		put_file(dir / "readme.txt", "hello card");
+		put_file(dir / "Songs" / "tune1.mid", std::string("MThd\0\0\0\6", 8) + "xyz");
+		put_file(dir / "a long name.txt", "skipped");
+		const std::string folder = reinterpret_cast<const char *>(dir.u8string().c_str());
+		smu2000::smartmedia fc;
+		std::vector<std::string> skipped;
+		std::string err;
+		const bool loaded = smu2000::cardfolder::load(folder, fc, skipped, err);
+		std::vector<smu2000::cardfs::entry> listed;
+		std::vector<u8> readme;
+		const bool shape = loaded && smu2000::cardfs::list(fc.raw(), listed, err) && listed.size() == 2 &&
+		                   smu2000::cardfs::read(fc.raw(), "README.TXT", readme, err) &&
+		                   std::string(readme.begin(), readme.end()) == "hello card" &&
+		                   skipped.size() == 1 && skipped[0] == "a long name.txt";
+		bool tune_ok = false;
+		for (const auto &e : listed)
+			tune_ok |= e.path == "SONGS/TUNE1.MID" && e.size == 11;
+		// firmware に書かせる。SAMPLING → SAVE → ALL+SEQ（サンプルは LOAD で入っている）。画面がどこにあっても
+		// 同じ所へ行けるよう、LOAD のマクロ（ui::panel_macro）と同じ歩き方で。保存先を選ぶ画面は、下のディレクトリが
+		// あると先にそれを出す（下のカードで :/SONGS と出た。firmware には見えている）ので、ここでは下のフォルダーを
+		// 外してから作り直したカードに書かせる
+		fs::remove_all(dir / "Songs", ec);
+		smu2000::smartmedia fc2;
+		std::vector<std::string> skipped2;
+		const bool loaded2 = smu2000::cardfolder::load(folder, fc2, skipped2, err);
+		h.mu.card() = fc2;
+		h.mu.card_swapped();
+		h.pump(1000);
+		std::string save_msg;
+		{
+			using M = ui::panel_macro;
+			std::vector<M::step> st;
+			for (int i = 0; i < 4; i++)
+				st.push_back(M::press(B::exit));
+			st.push_back(M::press(B::sampling_mode));
+			st.push_back(M::until("LOAD", 3000));
+			for (int i = 0; i < 5; i++)
+				st.push_back(M::press(B::select_left));    // 品書きの左端（EDIT）へ
+			st.push_back(M::press(B::select_right));
+			st.push_back(M::press(B::select_right));       // SAVE
+			st.push_back(M::press(B::enter));
+			st.push_back(M::until("ALL+SEQ", 3000));
+			st.push_back(M::press(B::enter));              // 保存先のディレクトリ
+			st.push_back(M::until(":/", 5000));
+			M macro;
+			macro.start(st, "dir");
+			bool finished = false;
+			for (int i = 0; i < 200 * 100 && !finished; i++) {
+				h.pump(10);
+				finished = macro.tick(h.mu, save_msg);
+			}
+			// ここからは g と同じ押し方（間を空けないと、名前の画面の ENTER を受けない）。名前の初期値は、直前に読んだファイルの名前
+			if (save_msg == "dir") {
+				h.press(B::enter);
+				h.pump(1000);
+				h.press(B::enter);
+				for (int i = 0; i < 50 && h.lcd().find("SAVING") == std::string::npos; i++)
+					h.pump(100);
+				const bool began = h.lcd().find("SAVING") != std::string::npos;
+				for (int i = 0; i < 300 && h.lcd().find("SAVING") != std::string::npos; i++)
+					h.pump(100);
+				save_msg = began ? "saved" : "SAVING did not appear [" + h.lcd() + "]";
+				for (int i = 0; i < 4; i++)
+					h.press(B::exit);
+			}
+		}
+		int written = 0;
+		const bool synced = smu2000::cardfolder::sync(h.mu.card().raw(), folder, written, err);
+		// 書き戻された M2A（名前は firmware が決める）
+		std::vector<u8> m2a_back;
+		for (const fs::directory_entry &e : fs::directory_iterator(dir, ec))
+			if (e.path().extension() == ".M2A") {
+				std::ifstream f(e.path(), std::ios::binary);
+				m2a_back.assign(std::istreambuf_iterator<char>(f), std::istreambuf_iterator<char>());
+			}
+		std::vector<smu2000::m2a::wave> waves;
+		const bool m2a_ok = !m2a_back.empty() && smu2000::m2a::parse(m2a_back, waves, err) && waves.size() == 1;
+		std::string readme_after;
+		{
+			std::ifstream f(dir / "readme.txt", std::ios::binary);
+			readme_after.assign(std::istreambuf_iterator<char>(f), std::istreambuf_iterator<char>());
+		}
+		// 大文字だけ違う README.TXT を新しく作らず、元の readme.txt のまま（Windows では同じ名前になるので、並びで見る）
+		bool upper_twin = false;
+		for (const fs::directory_entry &e : fs::directory_iterator(dir, ec))
+			upper_twin |= e.path().filename() == "README.TXT";
+		const bool kept = readme_after == "hello card" && fs::exists(dir / "a long name.txt") && !upper_twin;
+		const bool ok = shape && tune_ok && loaded2 && save_msg == "saved" && synced && written == 1 && m2a_ok && kept;
+		std::printf("%s フォルダーをカードとして差す      %u MB、カードのファイル %zu、入れなかった %zu、SAVE %s、書き戻した %d、M2A %zu バイト %s\n",
+		            ok ? "合" : "NG", fc.megabytes(), listed.size(), skipped.size(), save_msg.c_str(), written, m2a_back.size(), err.c_str());
+		if (!ok)
+			bad++;
+		fs::remove_all(dir, ec);
+		// 後の確かめのために、PC で書いたカードへ戻す
+		h.mu.card() = made;
+		h.mu.card_swapped();
+		h.pump(1000);
+	}
 	// 窓の道（bridge::request_macro → driver::sampling_tick）は早送りする。10ms のブロックを回して、
 	// 何ブロックで終わるか（= 実時間で鳴らしていたら何秒か）を見る。サンプルがあるので Overwrite ALL? も通る
 	{

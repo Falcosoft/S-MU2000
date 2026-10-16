@@ -37,8 +37,8 @@ public:
 	// megabytes は 16 / 32 / 64 / 128。中身は全部 0xFF（書式化されていない）
 	bool create(u32 megabytes);
 	// 作ったばかりのカードに、MU2000 の UTIL → CARD → Format と同じ論理の書式（区画表・ブート・FAT）を書く。
-	// create の直後に呼ぶ（使ったカードの書式化ではない）。files を渡すと、一番上のディレクトリに
-	// その順で置く（名前は 8.3 の大文字。「NAME.M2A」）。入りきらない・名前が悪いときは false
+	// create の直後に呼ぶ（使ったカードの書式化ではない）。files を渡すと、その順で置く（名前は 8.3 の大文字。
+	// 「NAME.M2A」。「DIR/NAME.M2A」なら下のディレクトリを作ってそこへ）。入りきらない・名前が悪いときは false
 	struct root_file { std::string name; std::vector<u8> bytes; };
 	bool format(const std::vector<root_file> &files = {});
 	// その大きさのファイルを 1 つ置ける、いちばん小さい容量（16 / 32 / 64 / 128）。入らなければ 0

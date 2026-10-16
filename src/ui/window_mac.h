@@ -37,6 +37,9 @@ std::string open_file_panel(const char *title, const char *ext);
 // Asks where to save a new file of some other kind. "" if it was cancelled
 std::string save_file_panel(const char *title, const char *default_name, const char *ext);
 
+// Picks a folder. "" if it was cancelled
+std::string pick_folder_panel(const char *title);
+
 // Asks a yes/no question and returns true only when the user accepts. Used
 // before the settings are thrown away, so the buttons are ordered for the
 // answer that changes nothing: Cancel is the default, and Return picks it

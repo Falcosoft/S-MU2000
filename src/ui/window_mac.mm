@@ -600,6 +600,22 @@ std::string open_midi_file_panel()
 	return path ? std::string(path) : std::string();
 }
 
+std::string pick_folder_panel(const char *title)
+{
+	NSOpenPanel *panel = [NSOpenPanel openPanel];
+	[panel setCanChooseFiles:NO];
+	[panel setCanChooseDirectories:YES];
+	[panel setCanCreateDirectories:YES];
+	[panel setAllowsMultipleSelection:NO];
+	if (title && *title)
+		[panel setMessage:[NSString stringWithUTF8String:title]];
+	if ([panel runModal] != NSModalResponseOK)
+		return {};
+	NSURL *url = [[panel URLs] firstObject];
+	const char *path = url ? [[url path] UTF8String] : nullptr;
+	return path ? std::string(path) : std::string();
+}
+
 std::string open_file_panel(const char *title, const char *ext)
 {
 	NSOpenPanel *panel = [NSOpenPanel openPanel];

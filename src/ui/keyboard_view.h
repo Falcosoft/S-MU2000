@@ -5,6 +5,7 @@
 //   ・5 オクターブの鍵盤。押すと鳴り、押したまま横へずらすと隣の鍵へ移る。鍵の下ほど強い（ほかの窓の鍵盤と同じ）。
 //     「強さ一定」にすると、どこを押しても決めた強さ
 //   ・ピッチベンド（離すと真ん中へ戻る）とモジュレーションの縦の帯、サステイン（CC64）の切り替え
+//   ・割り当てられるつまみ 2 つ。動かすコントロールチェンジを選ぶ（既定はリバーブとコーラスの送り）
 //   ・PC のキーボードでも弾ける。キーの並びが鍵盤の形になる割り当て（下の段 Z〜M と S D G H J、上の段 Q〜P と
 //     2 3 5 6 7 9 0。PageUp / PageDown でオクターブ）。どのキーがどの鍵かは鍵盤の上に字で出す
 // 窓を閉じたり隠したりしたら、押さえていた音を全部離す
@@ -106,6 +107,37 @@ public:
 			}
 		}
 
+		// ---- 割り当てられるつまみ 2 つ（issue #212 の追加の提案）。動かすコントロールチェンジを選び、横の帯で値を送る
+		for (int k = 0; k < 2; k++) {
+			ImGui::PushID(100 + k);
+			if (k)
+				ImGui::SameLine(0, fs * 1.5f);
+			ImGui::SetNextItemWidth(fs * 9.0f);
+			char label[48];
+			cc_name(m_knob_cc[k], label, sizeof(label));
+			if (ImGui::BeginCombo("##cc", label)) {
+				for (const cc_entry &e : CC_LIST) {
+					char row[48];
+					cc_name(e.cc, row, sizeof(row));
+					if (ImGui::Selectable(row, m_knob_cc[k] == e.cc))
+						m_knob_cc[k] = e.cc;
+				}
+				ImGui::EndCombo();
+			}
+			if (ImGui::IsItemHovered())
+				xgui::hint("%s", UI_TEXT(kb_knob_tip, "Assignable control\nPick which controller this slider moves (reverb send, chorus send, brightness and so on), then drag the slider. It sends on the port and channel chosen above. Other numbers: type one in the box next to it."));
+			ImGui::SameLine();
+			ImGui::SetNextItemWidth(fs * 3.2f);
+			int num = m_knob_cc[k];
+			if (ImGui::InputInt("##num", &num, 0, 0))
+				m_knob_cc[k] = std::clamp(num, 0, 119);
+			ImGui::SameLine();
+			ImGui::SetNextItemWidth(fs * 9.0f);
+			if (ImGui::SliderInt("##val", &m_knob_val[k], 0, 127))
+				send_cc(m_knob_cc[k], m_knob_val[k], br);
+			ImGui::PopID();
+		}
+
 		// ---- 左: ベンドとモジュレーションの帯。右: 鍵盤
 		const ImVec2 avail = ImGui::GetContentRegionAvail();
 		const float wheel_w = fs * 3.0f, h = std::max(fs * 5.0f, avail.y - fs * 1.6f);
@@ -173,6 +205,25 @@ private:
 
 	// 鍵 n（窓の左端からの 0 始まり）の左右の端と、黒鍵か
 	struct key_box { float x0, x1; bool black; };
+
+	// 割り当てられるつまみで選べるコントロールチェンジ（XG で効くものを中心に）
+	struct cc_entry { int cc; const char *name; };
+	static constexpr cc_entry CC_LIST[] = {
+		{ 91, "Reverb send" }, { 93, "Chorus send" }, { 94, "Variation send" }, { 7, "Volume" }, { 11, "Expression" },
+		{ 10, "Pan" }, { 74, "Brightness (cutoff)" }, { 71, "Harmonic content (resonance)" }, { 73, "Attack time" },
+		{ 72, "Release time" }, { 75, "Decay time" }, { 5, "Portamento time" }, { 65, "Portamento on/off" },
+		{ 76, "Vibrato rate" }, { 77, "Vibrato depth" }, { 78, "Vibrato delay" }, { 2, "Breath" }, { 4, "Foot" },
+		{ 66, "Sostenuto" }, { 67, "Soft pedal" }, { 84, "Portamento control" },
+	};
+	static void cc_name(int cc, char *out, size_t n)
+	{
+		for (const cc_entry &e : CC_LIST)
+			if (e.cc == cc) {
+				std::snprintf(out, n, "%d %s", cc, e.name);
+				return;
+			}
+		std::snprintf(out, n, "CC %d", cc);
+	}
 	key_box box_of(int n, float left, float kw) const
 	{
 		static const bool BLACK[12] = { 0, 1, 0, 1, 0, 0, 1, 0, 1, 0, 1, 0 };
@@ -334,6 +385,9 @@ private:
 	int m_velocity = 100;
 	bool m_fixed = false, m_sustain = false;
 	int m_bend = 8192, m_mod = 0;
+	// 割り当てられるつまみ: 動かすコントロールチェンジの番号と、いまの値。既定はリバーブとコーラスの送り
+	int m_knob_cc[2] = { 91, 93 };
+	int m_knob_val[2] = { 40, 0 };
 	int m_mouse_note = -1;
 	std::array<int, 128> m_held{};
 	std::array<int, PC_KEYS> m_pc_note = [] { std::array<int, PC_KEYS> a; a.fill(-1); return a; }();

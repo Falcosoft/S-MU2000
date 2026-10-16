@@ -89,7 +89,7 @@ enum : int {
 	ID_OUTMU_NONE = 4000, ID_OUTMU_BASE = 4001,
 	ID_AIN_NONE = 4500, ID_AIN_BASE = 4501,
 	ID_CARD_NEW16 = 5000, ID_CARD_NEW32, ID_CARD_NEW64, ID_CARD_NEW128,
-	ID_CARD_OPEN = 5010, ID_CARD_EJECT = 5011,
+	ID_CARD_OPEN = 5010, ID_CARD_EJECT = 5011, ID_CARD_FOLDER = 5012,
 	ID_PLAY_FILE = 5100, ID_STOP_FILE = 5101, ID_PORTS34_FOLD = 5102, ID_PORTS34_DROP = 5103,
 	ID_THIN_BENDS = 5104,    // the player lightens heavy MIDI (issue #82)
 	ID_FACTORY = 5200,
@@ -117,7 +117,7 @@ static_assert([] {
 	                        ID_IN_NONE + 3 * ID_IN_STRIDE,
 	                        ID_OUT_NONE, ID_OUTB_NONE, ID_OUTMU_NONE,
 	                        ID_AIN_NONE, ID_CARD_NEW16, ID_CARD_NEW32, ID_CARD_NEW64,
-	                        ID_CARD_NEW128, ID_CARD_OPEN, ID_CARD_EJECT,
+	                        ID_CARD_NEW128, ID_CARD_OPEN, ID_CARD_EJECT, ID_CARD_FOLDER,
 	                        ID_PLAY_FILE, ID_STOP_FILE, ID_FACTORY, ID_RESTART, ID_NATIVE_FX,
 	                        ID_NATIVE_ENGINE, ID_SETTINGS,
 	                        ID_PORTS34_FOLD, ID_PORTS34_DROP, ID_THIN_BENDS, ID_PC_EDITOR, ID_OVERVIEW,
@@ -327,6 +327,7 @@ inline std::vector<menu_group> menu_card(const menu_state &s)
 
 	menu_group g;
 	g.items.push_back(text(UI_TEXT(menu_card_open, "Insert a SmartMedia image..."), ID_CARD_OPEN, false, true));
+	g.items.push_back(text(UI_TEXT(menu_card_folder, "Use a folder as the SmartMedia..."), ID_CARD_FOLDER, false, true));
 	char eject[512];
 	if (!s.card_path.empty())
 		std::snprintf(eject, sizeof(eject), UI_TEXT(menu_card_eject_fmt, "Eject the SmartMedia (%s)"),

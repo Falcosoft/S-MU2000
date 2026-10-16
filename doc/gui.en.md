@@ -37,12 +37,24 @@ three entries are SmartMedia.
 
 * `Create a new SmartMedia and insert it` → 16 MB / 32 MB / 64 MB / 128 MB. Choose where to save it and a card file (`.img`) is created and inserted. It comes formatted the same way `UTIL → CARD → Format` leaves a card, so it can be saved to right away. While a card is in, its edge shows in the panel's slot
 * `Insert SmartMedia...` inserts a card file made earlier
+* `Use a folder as the SmartMedia...` inserts a folder of the PC as the card (issue #218; below)
 * `Eject SmartMedia` writes back to the file, then ejects
 
 SAMPLING's SAVE / LOAD (ALL+SEQ and so on) and UTIL's CARD work. What the
 firmware writes is flushed to the file every two seconds, on eject and when
 the GUI closes (changed blocks only). The inserted card is remembered in
 gui.ini and inserted again at the next start.
+
+**A folder as the card** (issue #218, `src/card_folder.h`): instead of a card file, a folder of the PC is inserted.
+
+* On insertion the card is built from the files in the folder (subfolders too). Its size is the smallest (16 to 128 MB)
+  that holds the contents in half, so SAVE has room
+* Card file names are FAT 8.3 (up to 8 characters, a dot and 3 more, no spaces). Files whose names do not fit even in
+  capitals are left out, and listed when the folder is inserted. At most 256 entries at the top, 510 in each subfolder
+* When the unit writes to the card (SAVE and so on), every two seconds and on eject or close **only new and changed files**
+  are written into the folder; a name that differs only in case goes to the existing file. **Files deleted on the card are
+  not deleted from the folder** (so files on the PC are never lost); they appear again the next time it is inserted
+* The inserted folder is remembered in gui.ini (`smartmedia=`) and inserted again at the next start
 
 The file holds the raw layout of the SmartMedia's NAND (512-byte pages plus
 16 spare bytes). Move files in and out from the PC with `tools/smcard.py`:
@@ -153,6 +165,8 @@ Open it with `Keyboard` on the bar at the top of the window (or `--keyboard-wind
   lowest key; middle C = C3)
 * **Bend and modulation**: the two strips on the left. Bend springs back to the middle; modulation (controller 1)
   stays where it is left. `Sustain` switches controller 64
+* **Two assignable controls** on the second row: pick a controller from the list (or type its number) and drag the
+  slider to send it. The defaults are the reverb send (CC91) and the chorus send (CC93)
 * **PC keyboard**: laid out like a piano. `Z X C V B N M` are white keys with `S D G H J` as the black keys
   between them (the keyboard's second octave); `Q W E R T Y U I O P` are the white keys an octave higher with
   `2 3 5 6 7 9 0` as the black keys. The letters are drawn on the keys they play. PageUp / PageDown move the octave.

@@ -53,6 +53,7 @@
 #include "ui/pc_window.h"
 #endif
 #include "ui/player.h"
+#include "card_folder.h"
 #include "ui/player_view.h"
 #include "ui/playlist.h"
 #include "ui/keyboard_view.h"
@@ -169,6 +170,7 @@ public:
 	std::string ain_name;            // the recording device, by name
 	std::string ain_keep;
 	std::string card_path;           // the SmartMedia in the slot, by path
+	bool card_is_folder = false;     // card_path is a folder used as the card (src/card_folder.h)
 	bool keep_settings = false;      // --nomidi: leave the remembered alone
 
 	audio_out *out = nullptr;        // set once the audio device is open
@@ -813,6 +815,20 @@ public:
 		if (blocks.empty())
 			return;
 		std::string err;
+		if (card_is_folder) {
+			// The firmware wrote to the card: put new and changed files into the folder (nothing is deleted there)
+			std::vector<u8> raw;
+			{
+				const std::lock_guard<std::mutex> hold(eng->card_lock);
+				raw = eng->mu.card().raw();
+			}
+			int written = 0;
+			if (!smu2000::cardfolder::sync(raw, card_path, written, err))
+				std::fprintf(stderr, "SmartMedia: %s\n", err.c_str());
+			else if (written)
+				std::printf(CLI_T("SmartMedia folder: wrote %d file(s) to %s\n", "SmartMedia のフォルダー: %d 個のファイルを %s に書いた\n"), written, card_path.c_str());
+			return;
+		}
 		if (!smu2000::smartmedia::write_blocks(card_path, blocks, err))
 			std::fprintf(stderr, "SmartMedia: %s\n", err.c_str());
 	}
@@ -888,7 +904,9 @@ public:
 			return false;
 		smu2000::smartmedia card;
 		std::string err;
-		if (!card.load(path, err)) {
+		std::vector<std::string> skipped;
+		const bool folder = smu2000::cardfolder::is_folder(path);
+		if (folder ? !smu2000::cardfolder::load(path, card, skipped, err) : !card.load(path, err)) {
 			std::fprintf(stderr, "SmartMedia: %s\n", err.c_str());
 			if (!quiet)
 				menu_error(err);
@@ -901,6 +919,15 @@ public:
 			eng->mu.card_swapped();   // firmware に抜けたのを見せる（前のカードの FAT を忘れさせる）
 		}
 		card_path = path;
+		card_is_folder = folder;
+		if (folder && !skipped.empty() && !quiet) {
+			std::string list;
+			for (size_t i = 0; i < skipped.size() && i < 12; i++)
+				list += "\n" + skipped[i];
+			if (skipped.size() > 12)
+				list += "\n...";
+			menu_note(std::string(UI_TEXT(dlg_card_folder_skipped, "These files were left off the card: their names do not fit the card's 8.3 rule (up to 8 letters, a dot and 3 more, no spaces).")) + list);
+		}
 		std::printf(CLI_T("SmartMedia inserted: %s (%uMB)\n", "SmartMedia を差した: %s（%uMB）\n"),
 		            path.c_str(), eng->mu.card().megabytes());
 		std::fflush(stdout);
@@ -929,6 +956,14 @@ public:
 		if (insert_card(path))
 			menu_note(UI_TEXT(dlg_fresh_card, "Inserted a new SmartMedia image.\n"
 			                                  "It is already formatted (as UTIL → CARD → Format leaves it), so it can be saved to right away."));
+	}
+
+	// A folder of the PC used as the card (src/card_folder.h, issue #218)
+	void do_card_folder()
+	{
+		const std::string path = ask_card_folder_path();
+		if (!path.empty() && insert_card(path))
+			save_settings();
 	}
 
 	void do_card_open()
@@ -1296,6 +1331,7 @@ public:
 		else if (id == ID_AUDIO_DEFAULT)                              choose_audio(-1);
 		else if (id >= ID_AUDIO_BASE && id < ID_AUDIO_BASE + 256)     choose_audio(id - ID_AUDIO_BASE);
 		else if (id == ID_CARD_OPEN)                                  do_card_open();
+		else if (id == ID_CARD_FOLDER)                                do_card_folder();
 		else if (id == ID_CARD_EJECT)                                 { eject_card(); save_settings(); }
 		else if (id >= ID_CARD_NEW16 && id <= ID_CARD_NEW128)         new_card(16u << (id - ID_CARD_NEW16));
 		else if (id == ID_PLAY_FILE)                                  do_midi_file();
@@ -1800,6 +1836,7 @@ public:
 	virtual void menu_note(const std::string &text) = 0;
 	// File dialogs ("" means cancelled)
 	virtual std::string ask_card_open_path() = 0;
+	virtual std::string ask_card_folder_path() = 0;   // a folder to use as the card (issue #218); "" when cancelled
 	virtual std::string ask_card_save_path() = 0;
 	virtual std::string ask_midi_file_path() = 0;
 	// Factory reset confirmation (false keeps everything)

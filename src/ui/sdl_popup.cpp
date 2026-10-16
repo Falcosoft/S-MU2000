@@ -65,6 +65,26 @@ static std::string file_dialog(SDL_Window *win, std::atomic<bool> &quit, bool sa
 	return st->path;
 }
 
+std::string open_folder(SDL_Window *win, std::atomic<bool> &quit)
+{
+	auto *held = new std::shared_ptr<dialog_state>(std::make_shared<dialog_state>());
+	std::shared_ptr<dialog_state> st = *held;
+	SDL_ShowOpenFolderDialog(dialog_done, held, win, nullptr, false);
+	while (!st->done.load() && !quit.load()) {
+		SDL_Event ev;
+		if (!SDL_WaitEventTimeout(&ev, 50))
+			continue;
+		if (ev.type == SDL_EVENT_QUIT) {
+			quit.store(true);
+			break;
+		}
+		if (ev.type == SDL_EVENT_KEY_DOWN && ev.key.key == SDLK_ESCAPE)
+			break;
+	}
+	std::lock_guard<std::mutex> hold(st->mutex);
+	return st->path;
+}
+
 std::string open_file(SDL_Window *win, std::atomic<bool> &quit,
                       const file_filter *filters, int nfilters,
                       const std::string &defloc)
