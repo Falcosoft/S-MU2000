@@ -233,5 +233,22 @@ int main(int argc, char **argv)
 	}
 
 	std::printf("---- %d サンプル進めても状態は完全に一致 ----\n", steps);
+
+	// ---- 5. 電源を入れ直した（reset）あとの状態も読み戻せる
+	// プラグインの POWER とボードの抜き差しは reset で入れ直す（engine::restart）。前は入れ直すたびに
+	// sci4 のタイマーが 8 本ずつ増え、そのあとの状態は「wrong marker (at sh7042)」で読めなかった（issue #221）
+	for (int k = 1; k <= 2; k++) {
+		one.reset();
+		for (size_t i = 0; i < size_t(30 * RATE) && !one.midi_ready(); i++)
+			advance(one, 1, events, at1, c1);
+		advance(one, RATE / 2, events, at1, c1);
+		const std::vector<u8> cycled = one.save_state();
+		if (cycled.size() != saved.size() || !two.load_state(cycled.data(), cycled.size(), err)) {
+			std::printf("入れ直し %d 回目のあとの状態が読み戻せない: %zu バイト（前は %zu）%s\n", k, cycled.size(),
+			            saved.size(), err.c_str());
+			return 1;
+		}
+	}
+	std::printf("電源を入れ直したあとの状態も読み戻せる\n");
 	return 0;
 }

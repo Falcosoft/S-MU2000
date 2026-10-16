@@ -53,8 +53,8 @@ protected:
 	devcb_write_line::array<7> m_tx;
 	devcb_write_line::array<4> m_irq;
 
-	emu_timer *m_tx_timer[4];
-	emu_timer *m_rx_timer[4];
+	emu_timer *m_tx_timer[4] = {};
+	emu_timer *m_rx_timer[4] = {};
 
 	std::array<u8, 7> m_rx;
 	std::array<u8, 4> m_enable, m_status, m_datamode, m_div, m_cur_rx;
