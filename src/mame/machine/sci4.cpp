@@ -83,9 +83,14 @@ void sci4_device::device_start()
 
 	save_item(NAME(m_targets));
 
+	// S-MU2000: device_start は電源を入れ直すたび（mu2000::reset）に呼ばれる。タイマーは最初の 1 回だけ作る。
+	// 毎回作ると古い 8 本が機械に残って予定どおり鳴り続け（入れ直しのあと、ボードとの直列の 1 ビットが二重に進む）、
+	// タイマーの数も増えて、入れ直したあとの状態が読み戻せなかった（「wrong marker (at sh7042)」。issue #207・#221）
 	for(u32 i=0; i != 4; i++) {
-		m_tx_timer[i] = timer_alloc(FUNC(sci4_device::tx_tick), this);
-		m_rx_timer[i] = timer_alloc(FUNC(sci4_device::rx_tick), this);
+		if(!m_tx_timer[i])
+			m_tx_timer[i] = timer_alloc(FUNC(sci4_device::tx_tick), this);
+		if(!m_rx_timer[i])
+			m_rx_timer[i] = timer_alloc(FUNC(sci4_device::rx_tick), this);
 	}
 }
 
@@ -109,6 +114,14 @@ void sci4_device::device_reset()
 	std::fill(m_rx_active.begin(), m_rx_active.end(), 0);
 
 	m_targets = 0;
+
+	// S-MU2000: 送り・受けの途中で入れ直したときの予定も消す（実機の電源と同じく、途中のビットは残らない）
+	for(u32 i=0; i != 4; i++) {
+		if(m_tx_timer[i])
+			m_tx_timer[i]->adjust(attotime::never);
+		if(m_rx_timer[i])
+			m_rx_timer[i]->adjust(attotime::never);
+	}
 }
 
 void sci4_device::do_rx_w(int sci, int state)
