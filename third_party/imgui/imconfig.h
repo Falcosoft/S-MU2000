@@ -148,3 +148,13 @@ namespace ImGui
     void MyFunction(const char* name, MyMatrix44* mtx);
 }
 */
+
+//---- S-MU2000: the current context is per thread (issue #224).
+// A host may run two plug-in editors on two GUI threads at once (VST MIDI Driver opens
+// port A's and port B's on their own threads). With one global GImGui, each thread
+// switched the other's context in the middle of its frame and ImGui asserted
+// "Forgot to call Render()" (or crashed with NDEBUG). Every frame here sets its own
+// context first (SetCurrentContext), so per-thread is enough.
+struct ImGuiContext;
+inline thread_local ImGuiContext* SmuImGuiTLS = nullptr;
+#define GImGui SmuImGuiTLS

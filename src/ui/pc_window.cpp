@@ -6,6 +6,7 @@
 #include "ui/lang.h"
 #include "ui/font_file.h"
 #include "ui/dxgi_stay.h"
+#include "ui/tex.h"
 
 #include "imgui.h"
 #include "backends/imgui_impl_dx11.h"
@@ -255,6 +256,7 @@ void pc_window::destroy()
 {
 	if (m_imgui) {
 		ImGui::SetCurrentContext(m_imgui);
+		im::drop_user_textures();      // this window's own pictures (ui/tex.h; issue #224)
 		ImGui_ImplDX11_Shutdown();
 		ImGui_ImplWin32_Shutdown();
 		ImGui::DestroyContext(m_imgui);

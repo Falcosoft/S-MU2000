@@ -24,6 +24,7 @@
 // decides the pace.
 
 #include "ui/pc_window.h"
+#include "ui/tex.h"
 
 #include "ui/lang.h"
 #include "ui/font_file.h"
@@ -634,6 +635,7 @@ void pc_window::destroy()
 {
 	if (m_imgui) {
 		ImGui::SetCurrentContext(m_imgui);
+		ui::im::drop_user_textures();  // this window's own pictures (ui/tex.h; issue #224)
 		ImGui_ImplMetal_Shutdown();
 		ImGui::DestroyContext(m_imgui);
 		m_imgui = nullptr;
