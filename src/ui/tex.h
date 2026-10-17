@@ -36,6 +36,7 @@
 #include "imgui_internal.h"
 
 #include <cstdint>
+#include <mutex>
 #include <vector>
 
 namespace ui {
@@ -54,6 +55,16 @@ inline std::vector<user_tex> &user_textures()
 {
 	static std::vector<user_tex> all;
 	return all;
+}
+
+// Both lists are the process's, but a host may draw two plug-in editors on two
+// threads at once (VST MIDI Driver's ports A and B, issue #224). Hold this
+// around every look at them; each thread only ever hands back its own context's
+// textures, so nothing here touches a context another thread is drawing with
+inline std::mutex &textures_lock()
+{
+	static std::mutex m;
+	return m;
 }
 
 // A texture that has been replaced, but whose graphics object the backend has
@@ -110,6 +121,7 @@ public:
 		m_h = h;
 		convert(argb);
 		ImGui::RegisterUserTexture(m_data);
+		std::lock_guard<std::mutex> lock(textures_lock());
 		user_textures().push_back({ ctx, m_data, this });
 		return true;
 	}
@@ -156,6 +168,7 @@ public:
 		if (!t)
 			return;
 		ImGuiContext *ctx = ImGui::GetCurrentContext();
+		std::lock_guard<std::mutex> lock(textures_lock());
 		std::vector<user_tex> &all = user_textures();
 		for (size_t i = 0; i < all.size(); i++) {
 			if (all[i].data != t)
@@ -176,6 +189,7 @@ public:
 		forget();
 		if (!t)
 			return;
+		std::lock_guard<std::mutex> lock(textures_lock());
 		std::vector<user_tex> &all = user_textures();
 		for (size_t i = 0; i < all.size(); i++) {
 			if (all[i].data != t)
@@ -228,18 +242,21 @@ private:
 // texture that was never uploaded has not reached either. A picture that is
 // somehow never reported is forced out after a few frames, where no draw
 // command can still name it: the draw list is cleared every frame.
+// Only the current context's: the frame count is that context's, and another
+// context may be in the middle of a frame on another thread (issue #224)
 inline void drop_retired_textures()
 {
+	ImGuiContext *const here = ImGui::GetCurrentContext();
+	if (!here)
+		return;
+	std::lock_guard<std::mutex> lock(textures_lock());
 	std::vector<retired_tex> &r = retired_textures();
 	const ImU64 now = ImU64(ImGui::GetFrameCount());
 	for (size_t i = 0; i < r.size();) {
 		ImTextureData *t = r[i].data;
 		const bool gone = t->TexID == ImTextureID_Invalid && t->BackendUserData == NULL;
-		if (gone || now >= r[i].marked + 8) {
-			ImGuiContext *prev = ImGui::GetCurrentContext();
-			ImGui::SetCurrentContext(r[i].ctx);
+		if (r[i].ctx == here && (gone || now >= r[i].marked + 8)) {
 			ImGui::UnregisterUserTexture(t);
-			ImGui::SetCurrentContext(prev);
 			IM_DELETE(t);
 			r.erase(r.begin() + long(i));
 		} else
@@ -254,8 +271,9 @@ inline void drop_user_textures()
 	// 片付けないので、差し替えた直後（数フレーム以内）に窓が閉じると、消える文脈を指したままの待ち札が残る。
 	// 次の窓の最初の描画（panel::paint の drop_retired_textures）がそれを消えた文脈から外そうとして落ちる
 	// （プラグインの画面を外してすぐ付け直したとき。issue #131）。文脈ごと無くなるので、描画命令が指している心配は無い
+	ImGuiContext *const dying = ImGui::GetCurrentContext();
+	std::lock_guard<std::mutex> lock(textures_lock());
 	{
-		ImGuiContext *const dying = ImGui::GetCurrentContext();
 		std::vector<retired_tex> &r = retired_textures();
 		for (size_t i = 0; i < r.size();) {
 			if (r[i].ctx != dying) {
@@ -268,18 +286,22 @@ inline void drop_user_textures()
 			r.erase(r.begin() + long(i));
 		}
 	}
+	// The dying context's own pictures only. This used to empty the whole list, so
+	// closing one plug-in editor freed the pictures of another one still open (issue #224)
 	std::vector<user_tex> &all = user_textures();
-	for (const user_tex &u : all) {
-		ImGuiContext *prev = ImGui::GetCurrentContext();
-		ImGui::SetCurrentContext(u.ctx);
+	for (size_t i = 0; i < all.size();) {
+		const user_tex u = all[i];
+		if (u.ctx != dying) {
+			i++;
+			continue;
+		}
 		u.data->SetStatus(ImTextureStatus_WantDestroy);
 		ImGui::UnregisterUserTexture(u.data);
-		ImGui::SetCurrentContext(prev);
 		IM_DELETE(u.data);
 		if (u.owner)
 			u.owner->forget();
+		all.erase(all.begin() + long(i));
 	}
-	all.clear();
 }
 
 } // namespace im
