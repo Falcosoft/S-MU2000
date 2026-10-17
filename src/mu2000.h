@@ -1375,6 +1375,9 @@ private:
 	u32  m_thread_check = 0;
 	void apply_threading();
 	std::atomic<u64> m_slave_go{0}, m_slave_done{0}, m_slave_started{0};
+	// The audio thread is asleep in m_slave_done.wait (issue #225). The worker only
+	// notifies then: an unconditional notify every sample cost about 5% with mingw's libstdc++
+	std::atomic<bool> m_master_waiting{false};
 	std::atomic<bool> m_slave_quit{false};
 	// Audio-thread-only: detect a worker that cannot run concurrently (e.g.
 	// process pinned to one CPU), then periodically retry parallel rendering.

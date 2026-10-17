@@ -381,8 +381,11 @@ void mu2000::slave_loop(u64 seen)
 		m_slave_started.store(seen, std::memory_order_release);
 		m_slave_l = m_slave_r = 0;
 		m_swps.run_sample(m_slave_l, m_slave_r);
-		m_slave_done.store(seen, std::memory_order_release);
-		m_slave_done.notify_one();
+		// seq_cst on both sides (here and the audio thread's wait below): either this load sees
+		// the waiter, or the waiter's own check sees the new value and does not sleep
+		m_slave_done.store(seen, std::memory_order_seq_cst);
+		if (m_master_waiting.load(std::memory_order_seq_cst))
+			m_slave_done.notify_one();
 	}
 }
 
@@ -4317,8 +4320,10 @@ void mu2000::run_sample(s32 &left, s32 &right)
 			// Only a *late start* (as opposed to slow DSP) counts as a
 			// scheduling stall and can trigger a temporary serial fallback.
 			const bool late = m_slave_started.load(std::memory_order_acquire) != tag;
-			while (m_slave_done.load(std::memory_order_acquire) != tag)
-				m_slave_done.wait(tag - 1, std::memory_order_acquire);
+			m_master_waiting.store(true, std::memory_order_seq_cst);
+			for (u64 now; (now = m_slave_done.load(std::memory_order_seq_cst)) != tag;)
+				m_slave_done.wait(now, std::memory_order_acquire);
+			m_master_waiting.store(false, std::memory_order_relaxed);
 			if (late && ++m_slave_late_starts >= SLAVE_STARVE_LIMIT) {
 				m_slave_retry = SLAVE_RETRY_SAMPLES;
 				m_slave_late_starts = 0;
