@@ -31,6 +31,17 @@ jobs:
       - run: make check-settings
       - run: python3 tools/check_texts.py
       - run: make test
+      - name: Upload macOS plug-ins
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: plugins-macos
+          if-no-files-found: warn
+          path: |
+            build/S-MU2000.vst3
+            build/S-MU2000.clap
+            build/S-MU2000.component
+            build/S-MU2000.app
 
   linux:
     runs-on: ubuntu-latest
@@ -75,6 +86,15 @@ jobs:
           export PKG_CONFIG_PATH="$HOME/sdl3/lib/pkgconfig:$HOME/sdl3/lib/x86_64-linux-gnu/pkgconfig"
           export LD_LIBRARY_PATH="$HOME/sdl3/lib:$HOME/sdl3/lib/x86_64-linux-gnu"
           SDL_VIDEODRIVER=dummy make test
+      - name: Upload Linux plug-ins
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: plugins-linux-x64
+          if-no-files-found: warn
+          path: |
+            build-linux/S-MU2000.vst3
+            build-linux/S-MU2000.clap
 
   windows:
     # The owner's own setup (MSYS2 mingw64): native build, texts, and the
@@ -97,6 +117,16 @@ jobs:
       - run: make check-settings
       - run: python3 tools/check_texts.py
       - run: make test
+      - name: Upload MinGW-w64 x64 plug-ins
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: plugins-windows-mingw64
+          if-no-files-found: warn
+          path: |
+            build/S-MU2000.vst3
+            build/S-MU2000.clap
+            build/S-MU2000.dll
 
   windows-cmake-msvc:
     # CMake with MSVC, on both -A profiles. Everything above compiles with
@@ -116,6 +146,16 @@ jobs:
       - run: cmake -S . -B build-msvc-${{ matrix.platform }} -A ${{ matrix.platform }}
       - run: cmake --build build-msvc-${{ matrix.platform }} --config Release --parallel
       - run: .\build-msvc-${{ matrix.platform }}\bin\${{ matrix.platform }}\Release\verify.exe
+      - name: Upload MSVC ${{ matrix.platform }} plug-ins
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: plugins-windows-msvc-${{ matrix.platform }}
+          if-no-files-found: warn
+          path: |
+            build-msvc-${{ matrix.platform }}/S-MU2000.vst3
+            build-msvc-${{ matrix.platform }}/**/S-MU2000.clap
+            build-msvc-${{ matrix.platform }}/**/S-MU2000.dll
 
   readme:
     # **README は英語が表**（README.md）で、日本語が README.ja.md。
@@ -161,3 +201,13 @@ jobs:
           update: true
           install: mingw-w64-i686-toolchain mingw-w64-i686-make mingw-w64-i686-python make
       - run: make -j$(nproc) all
+      - name: Upload MinGW-w64 x86 plug-ins
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: plugins-windows-mingw32
+          if-no-files-found: warn
+          path: |
+            build/S-MU2000.vst3
+            build/S-MU2000.clap
+            build/S-MU2000.dll
