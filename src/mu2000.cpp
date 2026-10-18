@@ -3649,16 +3649,15 @@ void mu2000::vb16_gain(vb_chan &c)
 	const float vol = smu2000::vboard::level_of(c.vol) * smu2000::vboard::level_of(c.exp);
 	float pl = 1, pr = 1;
 	smu2000::vboard::pan_of(c.pan, pl, pr);
-	const float rev = smu2000::vboard::level_of(c.rev), cho = smu2000::vboard::level_of(c.cho);
+	using smu2000::vboard::send_of;
 	c.gain[0] = vol * pl;
 	c.gain[1] = vol * pr;
-	c.gain[2] = vol * pl * rev;
-	c.gain[3] = vol * pr * rev;
-	c.gain[4] = vol * pl * cho;
-	c.gain[5] = vol * pr * cho;
-	const float var = smu2000::vboard::level_of(c.var);
-	c.gain[6] = vol * pl * var;
-	c.gain[7] = vol * pr * var;
+	c.gain[2] = vol * pl * send_of(c.rev, c.pan, false);
+	c.gain[3] = vol * pr * send_of(c.rev, c.pan, true);
+	c.gain[4] = vol * pl * send_of(c.cho, c.pan, false);
+	c.gain[5] = vol * pr * send_of(c.cho, c.pan, true);
+	c.gain[6] = vol * pl * send_of(c.var, c.pan, false);
+	c.gain[7] = vol * pr * send_of(c.var, c.pan, true);
 }
 
 void mu2000::set_board_insert(int channel, int slot)
@@ -3985,13 +3984,14 @@ bool mu2000::vb1_mix(vb_slot &s, float bus[][2])
 		const float vol = smu2000::vboard::level_of(m_ram[pb + 0x0b]) * smu2000::vboard::level_of(m_ram[pb + xg::ram::PART_EXP]);
 		float pl = 1, pr = 1;
 		smu2000::vboard::pan_of(m_ram[pb + 0x0e], pl, pr);
-		const float cho = smu2000::vboard::level_of(m_ram[pb + 0x12]), rev = smu2000::vboard::level_of(m_ram[pb + 0x13]);
+		using smu2000::vboard::send_of;
+		const int pan = m_ram[pb + 0x0e], cho = m_ram[pb + 0x12], rev = m_ram[pb + 0x13];
 		s.gain[0] = vol * pl;
 		s.gain[1] = vol * pr;
-		s.gain[2] = vol * pl * rev;
-		s.gain[3] = vol * pr * rev;
-		s.gain[4] = vol * pl * cho;
-		s.gain[5] = vol * pr * cho;
+		s.gain[2] = vol * pl * send_of(rev, pan, false);
+		s.gain[3] = vol * pr * send_of(rev, pan, true);
+		s.gain[4] = vol * pl * send_of(cho, pan, false);
+		s.gain[5] = vol * pr * send_of(cho, pan, true);
 	}
 	float v;
 	if (user) {
