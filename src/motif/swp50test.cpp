@@ -133,6 +133,15 @@ int main()
 	CHECK(std::fabs(20 * std::log10(swp50_device::level_to_gain(26)) + 9.37) < 0.02);
 	CHECK(std::fabs(20 * std::log10(swp50_device::level_to_gain(123)) + 45.91) < 0.02);
 	CHECK(swp50_device::level_to_gain(0x10) == 0.5 && swp50_device::level_to_gain(0xff) == 0.0);
+	// 送り: 実機の Dry Level（下げ幅 3 = −0.84dB、6 = −1.80dB、11 = −3.67dB）、パン（17 = −6.30dB）
+	CHECK(std::fabs(20 * std::log10(swp50_device::send_to_gain(3)) + 0.84) < 0.03);
+	CHECK(std::fabs(20 * std::log10(swp50_device::send_to_gain(6)) + 1.80) < 0.03);
+	CHECK(std::fabs(20 * std::log10(swp50_device::send_to_gain(11)) + 3.67) < 0.03);
+	CHECK(std::fabs(20 * std::log10(swp50_device::send_to_gain(17)) + 6.30) < 0.03);
+	CHECK(swp50_device::send_to_gain(0) == 1.0 && swp50_device::send_to_gain(0x10) == 0.5 && swp50_device::send_to_gain(0xff) == 0.0);
+	// 音量の式 = 送りの式に 0.75 目盛りを足したもの（オクターブの中で一致）
+	for (uint32_t a = 0; a < 16; a++)
+		CHECK(std::fabs(swp50_device::level_to_gain(a) - (32.0 - a - 0.75) / 31.25) < 1e-12);
 
 	// 数え
 	const uint16_t c0 = s.read(swp50_device::SAMPLE_COUNT);

@@ -184,6 +184,12 @@ public:
 	// 2026-10-14 に実機の 35 点と合わせたもの（エレメントの音量の 15 点は 0.01dB 以内）。送りの量が同じ式かは未確認
 	static double level_to_gain(uint32_t a) { return a >= 0xff ? 0.0 : std::ldexp(1.0 - double(a & 15) / 31.25, -int(a >> 4)); }
 
+	// 送りの量（r = 0x21・0x23・0x25・0x27 の下のバイト）とパン（r = 0x1C）の倍率。同じく振幅でまっすぐだが、分母は 32。
+	// 2026-10-18 に Dry Level の 7 点（0.03dB 以内）とパンの 1 点で確かめた。
+	// level_to_gain の分母 31.25 は、この式に「0.75 目盛りの下げ」を足したものと同じ（ボイスの音量の道にだけ足されているらしい）
+	static double send_to_gain(uint32_t a) { return a >= 0xff ? 0.0 : std::ldexp(double(32 - (a & 15)) / 32.0, -int(a >> 4)); }
+	double send_gain(uint32_t n, int k) const { return send_to_gain(send_atten(n, k)); }
+
 	// ---- 書かれた値を、意味ごとに取り出す口 ----
 
 	uint16_t reg(uint32_t a, uint32_t r) const { return m_reg[(a & 0x7f) << 9 | (r & 0x1ff)]; }
