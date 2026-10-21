@@ -12,12 +12,15 @@
 #include "imgui_internal.h"   // SetKeyOwner（棒が矢印キーをもらう）
 
 #include <algorithm>
+#include <atomic>
 #include <cstdarg>
 #include <chrono>
 #include <cmath>
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
+#include <memory>
+#include <mutex>
 #include <vector>
 
 #include "compat/paths.h"
@@ -63,19 +66,25 @@ const char *const GM_GROUPS[16] = {
 
 
 namespace {
-std::unique_ptr<xg::voice_rom> g_voices;
+// 1 度読めたら差し替えない（プロセスが終わるまで持つ）。プラグインを 2 つ同時に起動すると、
+// 2 つの起動のスレッドから同時に来るので、鍵をかけて 1 度だけ作る（#233）
+std::atomic<const xg::voice_rom *> g_voices{ nullptr };
+std::mutex g_voices_mutex;
 }
 
 void set_voice_rom(std::shared_ptr<const std::vector<u8>> rom)
 {
 	if (rom)
 		xg::set_fx_type_rom(*rom);                // エフェクトの種類の表も同じ ROM から
-	g_voices = std::make_unique<xg::voice_rom>(std::move(rom));
-	if (!g_voices->ok())
-		g_voices.reset();                  // 版が違う。GM の名前で出す
+	std::lock_guard<std::mutex> lock(g_voices_mutex);
+	if (g_voices.load(std::memory_order_acquire))
+		return;
+	auto v = std::make_unique<xg::voice_rom>(std::move(rom));
+	if (v->ok())                               // 版が違えば持たない。GM の名前で出す
+		g_voices.store(v.release(), std::memory_order_release);
 }
 
-const xg::voice_rom *voices() { return g_voices.get(); }
+const xg::voice_rom *voices() { return g_voices.load(std::memory_order_acquire); }
 
 namespace {
 const xg_snapshot *g_current_ram = nullptr;
