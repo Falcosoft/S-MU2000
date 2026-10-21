@@ -17,9 +17,12 @@
 
 #include "compat/mamecompat.h"
 
+#include <atomic>
 #include <cstdio>
 #include <cstring>
 #include <deque>
+#include <memory>
+#include <mutex>
 #include <string>
 #include <vector>
 
@@ -61,9 +64,9 @@ struct fx_tables {
 	bool from_rom = false;
 };
 
-inline fx_tables &tables()
+inline const fx_tables &basic_tables()
 {
-	static fx_tables t = [] {
+	static const fx_tables t = [] {
 		fx_tables b;
 		b.rev.assign(std::begin(REV_BASIC), std::end(REV_BASIC));
 		b.cho.assign(std::begin(CHO_BASIC), std::end(CHO_BASIC));
@@ -73,12 +76,35 @@ inline fx_tables &tables()
 	return t;
 }
 
+// ROM から読んだ表。1 度だけ作って、プロセスが終わるまで消さない（読んでいる側の参照が切れないように）。
+// プラグインを 2 つ同時に起動すると、2 つのスレッドから同時に set_fx_type_rom が来る（#233）
+inline std::atomic<const fx_tables *> &rom_tables()
+{
+	static std::atomic<const fx_tables *> p{ nullptr };
+	return p;
+}
+
+inline std::mutex &rom_tables_mutex()
+{
+	static std::mutex m;
+	return m;
+}
+
+inline const fx_tables &tables()
+{
+	const fx_tables *p = rom_tables().load(std::memory_order_acquire);
+	return p ? *p : basic_tables();
+}
+
 } // namespace detail
 
 // プログラム ROM から種類の表を読む。番地は MU2000 EX（firmware v2.01）で調べたもの。
-// 版が違って形が合わなければ何もしない（false）
+// 版が違って形が合わなければ何もしない（false）。1 度読めたら、あとは何もしない（true）
 inline bool set_fx_type_rom(const std::vector<u8> &rom)
 {
+	std::lock_guard<std::mutex> lock(detail::rom_tables_mutex());
+	if (detail::rom_tables().load(std::memory_order_acquire))
+		return true;
 	constexpr u32 REV_CODES = 0x2aea33, CHO_CODES = 0x2aea59, VAR_CODES = 0x2aea83;   // (MSB, LSB) の並び
 	constexpr u32 NAMES = 0x2aeb6f;                                                  // 10 文字ずつ、同じ順
 	constexpr int NREV = 19, NCHO = 21, NVAR = 118;
@@ -90,8 +116,8 @@ inline bool set_fx_type_rom(const std::vector<u8> &rom)
 	    name_at(NREV + NCHO + NVAR - 1).rfind("THRU", 0) || rom[REV_CODES] || rom[REV_CODES + 1] ||
 	    rom[VAR_CODES + 2 * (NVAR - 1)] != 0x40)
 		return false;
-	detail::fx_tables &t = detail::tables();
-	t.rev.clear(); t.cho.clear(); t.ins.clear(); t.names.clear();
+	auto made = std::make_unique<detail::fx_tables>();
+	detail::fx_tables &t = *made;
 	int k = 0;
 	auto load = [&](std::vector<fx_type> &out, u32 codes, int n) {
 		for (int i = 0; i < n; i++, k++) {
@@ -106,6 +132,7 @@ inline bool set_fx_type_rom(const std::vector<u8> &rom)
 	load(t.cho, CHO_CODES, NCHO);
 	load(t.ins, VAR_CODES, NVAR);
 	t.from_rom = true;
+	detail::rom_tables().store(made.release(), std::memory_order_release);
 	return true;
 }
 
